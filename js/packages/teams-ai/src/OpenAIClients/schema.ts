@@ -121,7 +121,7 @@ export interface CreateChatCompletionResponseChoicesInner {
  * @private
  */
 export interface ChatCompletionResponseMessage {
-    role: 'system' | 'user' | 'assistant';
+    role: 'system' | 'user' | 'assistant' | 'tool';
     content: string;
 }
 
