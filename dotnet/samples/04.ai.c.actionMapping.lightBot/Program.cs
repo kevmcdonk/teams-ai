@@ -3,10 +3,9 @@ using LightBot.Model;
 using Microsoft.Bot.Builder;
 using Microsoft.Bot.Builder.Integration.AspNet.Core;
 using Microsoft.Bot.Connector.Authentication;
-using Microsoft.TeamsAI;
-using Microsoft.TeamsAI.AI;
-using Microsoft.TeamsAI.AI.Planner;
-using Microsoft.TeamsAI.AI.Prompt;
+using Microsoft.Teams.AI.AI.Models;
+using Microsoft.Teams.AI.AI.Planners;
+using Microsoft.Teams.AI.AI.Prompts;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -31,14 +30,35 @@ builder.Services.AddSingleton<IBotFrameworkHttpAdapter>(sp => sp.GetService<Clou
 // Create singleton instances for bot application
 builder.Services.AddSingleton<IStorage, MemoryStorage>();
 
-
-// Use OpenAI service
-if (config.OpenAI == null || string.IsNullOrEmpty(config.OpenAI.ApiKey))
+// Create AI Model
+if (!string.IsNullOrEmpty(config.OpenAI?.ApiKey))
 {
-    throw new Exception("Missing OpenAI configuration.");
+    builder.Services.AddSingleton<OpenAIModel>(sp => new(
+        new OpenAIModelOptions(config.OpenAI.ApiKey, "gpt-3.5-turbo")
+        {
+            LogRequests = true
+        },
+        sp.GetService<ILoggerFactory>()
+    ));
 }
-
-builder.Services.AddSingleton<OpenAIPlannerOptions>(_ => new(config.OpenAI.ApiKey, "gpt-3.5-turbo") { LogRequests = true });
+else if (!string.IsNullOrEmpty(config.Azure?.OpenAIApiKey) && !string.IsNullOrEmpty(config.Azure.OpenAIEndpoint))
+{
+    builder.Services.AddSingleton<OpenAIModel>(sp => new(
+        new AzureOpenAIModelOptions(
+            config.Azure.OpenAIApiKey,
+            "gpt-35-turbo",
+            config.Azure.OpenAIEndpoint
+        )
+        {
+            LogRequests = true
+        },
+        sp.GetService<ILoggerFactory>()
+    ));
+}
+else
+{
+    throw new Exception("please configure settings for either OpenAI or Azure");
+}
 
 // Create the bot as transient. In this case the ASP Controller is expecting an IBot.
 builder.Services.AddTransient<IBot>(sp =>
@@ -46,31 +66,44 @@ builder.Services.AddTransient<IBot>(sp =>
     // Create loggers
     ILoggerFactory loggerFactory = sp.GetService<ILoggerFactory>()!;
 
-    // Create OpenAIPlanner
-    IPlanner<AppState> planner = new OpenAIPlanner<AppState>(
-        sp.GetService<OpenAIPlannerOptions>()!,
-        loggerFactory.CreateLogger<OpenAIPlanner<AppState>>());
-
-    // Create Application
-    AIHistoryOptions aiHistoryOptions = new()
+    // Create Prompt Manager
+    PromptManager prompts = new(new()
     {
-        AssistantHistoryType = AssistantHistoryType.Text
-    };
+        PromptFolder = "./Prompts"
+    });
 
-    AIOptions<AppState> aiOptions = new(
-        planner: planner,
-        promptManager: new PromptManager<AppState>("./Prompts"),
-        prompt: "chatGPT",
-        history: aiHistoryOptions);
-
-    ApplicationOptions<AppState, AppStateManager> ApplicationOptions = new()
+    // Adds function to be referenced in the prompt template
+    prompts.AddFunction("getLightStatus", async (context, memory, functions, tokenizer, args) =>
     {
-        TurnStateManager = new AppStateManager(),
+        bool lightsOn = (bool)(memory.GetValue("conversation.lightsOn") ?? false);
+        return await Task.FromResult(lightsOn ? "on" : "off");
+    });
+
+    // Create ActionPlanner
+    ActionPlanner<AppState> planner = new(
+        options: new(
+            model: sp.GetService<OpenAIModel>()!,
+            prompts: prompts,
+            defaultPrompt: async (context, state, planner) =>
+            {
+                PromptTemplate template = prompts.GetPrompt("sequence");
+                return await Task.FromResult(template);
+            }
+        )
+        { LogRepairs = true },
+        loggerFactory: loggerFactory
+    );
+
+    return new TeamsLightBot(new()
+    {
         Storage = sp.GetService<IStorage>(),
-        AI = aiOptions,
-    };
-
-    return new TeamsLightBot(ApplicationOptions);
+        AI = new(planner),
+        LoggerFactory = loggerFactory,
+        TurnStateFactory = () =>
+        {
+            return new AppState();
+        }
+    });
 });
 
 var app = builder.Build();

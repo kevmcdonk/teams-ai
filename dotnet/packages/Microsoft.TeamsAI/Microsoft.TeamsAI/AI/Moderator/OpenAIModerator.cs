@@ -1,19 +1,17 @@
-﻿using Microsoft.TeamsAI.AI.Action;
-using Microsoft.TeamsAI.AI.Planner;
-using Microsoft.TeamsAI.AI.Prompt;
-using Microsoft.TeamsAI.Exceptions;
+﻿using Microsoft.Teams.AI.AI.Planners;
+using Microsoft.Teams.AI.Exceptions;
 using Microsoft.Extensions.Logging;
-using Microsoft.TeamsAI.State;
+using Microsoft.Teams.AI.State;
 using Microsoft.Bot.Builder;
-using Microsoft.TeamsAI.AI.OpenAI;
+using Microsoft.Teams.AI.AI.OpenAI;
 
-namespace Microsoft.TeamsAI.AI.Moderator
+namespace Microsoft.Teams.AI.AI.Moderator
 {
     /// <summary>
     /// An moderator that uses OpenAI's moderation API.
     /// </summary>
     /// <typeparam name="TState">The turn state class.</typeparam>
-    public class OpenAIModerator<TState> : IModerator<TState> where TState : ITurnState<StateBase, StateBase, TempState>
+    public class OpenAIModerator<TState> : IModerator<TState> where TState : TurnState
     {
         private readonly OpenAIModeratorOptions _options;
         private readonly OpenAIClient _client;
@@ -22,9 +20,9 @@ namespace Microsoft.TeamsAI.AI.Moderator
         /// Constructs an instance of the moderator.
         /// </summary>
         /// <param name="options">Options to configure the moderator</param>
-        /// <param name="logger">A logger instance</param>
+        /// <param name="loggerFactory">The logger factory instance</param>
         /// <param name="httpClient">HTTP client.</param>
-        public OpenAIModerator(OpenAIModeratorOptions options, ILogger? logger = null, HttpClient? httpClient = null)
+        public OpenAIModerator(OpenAIModeratorOptions options, ILoggerFactory? loggerFactory = null, HttpClient? httpClient = null)
         {
             _options = options;
 
@@ -33,11 +31,11 @@ namespace Microsoft.TeamsAI.AI.Moderator
                 Organization = _options.Organization,
             };
 
-            _client = new OpenAIClient(clientOptions, logger, httpClient);
+            _client = new OpenAIClient(clientOptions, loggerFactory, httpClient);
         }
 
         /// <inheritdoc />
-        public async Task<Plan?> ReviewPrompt(ITurnContext turnContext, TState turnState, PromptTemplate prompt)
+        public async Task<Plan?> ReviewInputAsync(ITurnContext turnContext, TState turnState, CancellationToken cancellationToken = default)
         {
             switch (_options.Moderate)
             {
@@ -46,7 +44,7 @@ namespace Microsoft.TeamsAI.AI.Moderator
                 {
                     string input = turnState.Temp?.Input ?? turnContext.Activity.Text;
 
-                    return await _HandleTextModeration(input, true);
+                    return await _HandleTextModerationAsync(input, true, cancellationToken);
                 }
                 default:
                     break;
@@ -56,7 +54,7 @@ namespace Microsoft.TeamsAI.AI.Moderator
         }
 
         /// <inheritdoc />
-        public async Task<Plan> ReviewPlan(ITurnContext turnContext, TState turnState, Plan plan)
+        public async Task<Plan> ReviewOutputAsync(ITurnContext turnContext, TState turnState, Plan plan, CancellationToken cancellationToken = default)
         {
             switch (_options.Moderate)
             {
@@ -70,7 +68,7 @@ namespace Microsoft.TeamsAI.AI.Moderator
                             string output = sayCommand.Response;
 
                             // If plan is flagged it will be replaced
-                            Plan? newPlan = await _HandleTextModeration(output, false);
+                            Plan? newPlan = await _HandleTextModerationAsync(output, false, cancellationToken);
 
                             return newPlan ?? plan;
                         }
@@ -85,25 +83,25 @@ namespace Microsoft.TeamsAI.AI.Moderator
             return plan;
         }
 
-        private async Task<Plan?> _HandleTextModeration(string text, bool isModelInput)
+        private async Task<Plan?> _HandleTextModerationAsync(string text, bool isModelInput, CancellationToken cancellationToken = default)
         {
             try
             {
-                ModerationResponse response = await _client.ExecuteTextModeration(text, _options.Model);
+                ModerationResponse response = await _client.ExecuteTextModerationAsync(text, _options.Model, cancellationToken);
                 ModerationResult? result = response.Results.Count > 0 ? response.Results[0] : null;
 
                 if (result != null)
                 {
                     if (result.Flagged)
                     {
-                        string actionName = isModelInput ? DefaultActionTypes.FlaggedInputActionName : DefaultActionTypes.FlaggedOutputActionName;
+                        string actionName = isModelInput ? AIConstants.FlaggedInputActionName : AIConstants.FlaggedOutputActionName;
 
                         // Flagged
                         return new Plan()
                         {
                             Commands = new List<IPredictedCommand>
                             {
-                                new PredictedDoCommand(actionName, new Dictionary<string, object>
+                                new PredictedDoCommand(actionName, new Dictionary<string, object?>
                                 {
                                     { "Result", result }
                                 })
@@ -117,14 +115,14 @@ namespace Microsoft.TeamsAI.AI.Moderator
             }
             catch (HttpOperationException e)
             {
-                // Rate limited
+                // Http error
                 if (e.StatusCode != null && (int)e.StatusCode == 429)
                 {
                     return new Plan()
                     {
                         Commands = new List<IPredictedCommand>
                         {
-                            new PredictedDoCommand(DefaultActionTypes.RateLimitedActionName)
+                            new PredictedDoCommand(AIConstants.HttpErrorActionName)
                         }
                     };
 

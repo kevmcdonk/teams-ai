@@ -1,11 +1,11 @@
-﻿using Microsoft.TeamsAI.State;
+﻿using Microsoft.Teams.AI.State;
 using System.Runtime.CompilerServices;
 
 // For Unit Testing
-[assembly: InternalsVisibleTo("Microsoft.TeamsAI.Tests")]
-namespace Microsoft.TeamsAI.AI.Action
+[assembly: InternalsVisibleTo("Microsoft.Teams.AI.Tests")]
+namespace Microsoft.Teams.AI.AI.Action
 {
-    internal class ActionCollection<TState> : IActionCollection<TState> where TState : ITurnState<StateBase, StateBase, TempState>
+    internal class ActionCollection<TState> : IActionCollection<TState> where TState : TurnState
     {
         private readonly Dictionary<string, ActionEntry<TState>> _actions;
 

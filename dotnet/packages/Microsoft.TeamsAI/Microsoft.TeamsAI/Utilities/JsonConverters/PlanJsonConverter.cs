@@ -1,9 +1,9 @@
 ﻿using System.Text.Json;
 using System.Text.Json.Serialization;
-using Microsoft.TeamsAI.AI;
-using Microsoft.TeamsAI.AI.Planner;
+using Microsoft.Teams.AI.AI;
+using Microsoft.Teams.AI.AI.Planners;
 
-namespace Microsoft.TeamsAI.Utilities.JsonConverters
+namespace Microsoft.Teams.AI.Utilities.JsonConverters
 {
     internal class PlanJsonConverter : JsonConverter<Plan>
     {
@@ -46,7 +46,7 @@ namespace Microsoft.TeamsAI.Utilities.JsonConverters
 
                         string? type = reader.GetString();
 
-                        if (type == null || !type.Equals(AITypes.Plan, StringComparison.OrdinalIgnoreCase))
+                        if (type == null || !type.Equals(AIConstants.Plan, StringComparison.OrdinalIgnoreCase))
                         {
                             throw new JsonException("The `type` property has to be equal to \"plan\" for it to be a plan json object");
                         }
@@ -98,7 +98,7 @@ namespace Microsoft.TeamsAI.Utilities.JsonConverters
 
             writer.WritePropertyName(_typePropertyName);
 
-            writer.WriteStringValue(AITypes.Plan);
+            writer.WriteStringValue(AIConstants.Plan);
 
             writer.WritePropertyName(_commandsPropertyName);
 

@@ -1,8 +1,8 @@
-﻿using Microsoft.TeamsAI.State;
+﻿using Microsoft.Teams.AI.State;
 
-namespace Microsoft.TeamsAI.AI.Action
+namespace Microsoft.Teams.AI.AI.Action
 {
-    internal interface IActionCollection<TState> where TState : ITurnState<StateBase, StateBase, TempState>
+    internal interface IActionCollection<TState> where TState : TurnState
     {
         /// <summary>
         /// Get an action from the collection.
@@ -17,7 +17,7 @@ namespace Microsoft.TeamsAI.AI.Action
         /// </summary>
         /// <param name="actionName">The name of the action.</param>
         /// <param name="handler">The action handler.</param>
-        /// <param name="allowOverrides">Whether or not this action's properties can be overriden. Default to false.</param>
+        /// <param name="allowOverrides">Whether or not this action's properties can be overridden. Default to false.</param>
         /// <exception cref="ArgumentException"></exception>
         void AddAction(string actionName, IActionHandler<TState> handler, bool allowOverrides = false);
 

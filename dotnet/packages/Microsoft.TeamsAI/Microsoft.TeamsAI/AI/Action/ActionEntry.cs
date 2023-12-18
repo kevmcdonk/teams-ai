@@ -1,13 +1,13 @@
-﻿using Microsoft.TeamsAI.State;
+﻿using Microsoft.Teams.AI.State;
 using System.Reflection;
 
-namespace Microsoft.TeamsAI.AI.Action
+namespace Microsoft.Teams.AI.AI.Action
 {
     /// <summary>
     /// Represents an action.
     /// </summary>
     /// <typeparam name="TState"></typeparam>
-    public class ActionEntry<TState> where TState : ITurnState<StateBase, StateBase, TempState>
+    internal sealed class ActionEntry<TState> where TState : TurnState
     {
         /// <summary>
         /// The action name.
@@ -72,7 +72,7 @@ namespace Microsoft.TeamsAI.AI.Action
 
             string name = actionAttribute.Name;
             IActionHandler<TState> handler = new ActionHandler<TState>(methodSignature, methodContainerInstance);
-            bool allowOverrides = actionAttribute.AllowOverrides;
+            bool allowOverrides = actionAttribute.IsDefault;
 
             return new ActionEntry<TState>(name, handler, allowOverrides);
         }

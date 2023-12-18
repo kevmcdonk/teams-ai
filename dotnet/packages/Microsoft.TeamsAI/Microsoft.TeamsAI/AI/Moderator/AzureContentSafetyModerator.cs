@@ -1,18 +1,16 @@
-﻿using Microsoft.TeamsAI.AI.Action;
-using Microsoft.TeamsAI.AI.Planner;
-using Microsoft.TeamsAI.AI.Prompt;
-using Microsoft.TeamsAI.State;
+﻿using Microsoft.Teams.AI.AI.Planners;
+using Microsoft.Teams.AI.State;
 using Microsoft.Bot.Builder;
 using Azure.AI.ContentSafety;
 using Azure;
 
-namespace Microsoft.TeamsAI.AI.Moderator
+namespace Microsoft.Teams.AI.AI.Moderator
 {
     /// <summary>
     /// An moderator that uses Azure Content Safety API.
     /// </summary>
     /// <typeparam name="TState">The turn state class.</typeparam>
-    public class AzureContentSafetyModerator<TState> : IModerator<TState> where TState : ITurnState<StateBase, StateBase, TempState>
+    public class AzureContentSafetyModerator<TState> : IModerator<TState> where TState : TurnState
     {
         private readonly AzureContentSafetyModeratorOptions _options;
         private readonly ContentSafetyClient _client;
@@ -28,7 +26,7 @@ namespace Microsoft.TeamsAI.AI.Moderator
         }
 
         /// <inheritdoc />
-        public async Task<Plan?> ReviewPrompt(ITurnContext turnContext, TState turnState, PromptTemplate prompt)
+        public async Task<Plan?> ReviewInputAsync(ITurnContext turnContext, TState turnState, CancellationToken cancellationToken = default)
         {
             switch (_options.Moderate)
             {
@@ -47,7 +45,7 @@ namespace Microsoft.TeamsAI.AI.Moderator
         }
 
         /// <inheritdoc />
-        public async Task<Plan> ReviewPlan(ITurnContext turnContext, TState turnState, Plan plan)
+        public async Task<Plan> ReviewOutputAsync(ITurnContext turnContext, TState turnState, Plan plan, CancellationToken cancellationToken = default)
         {
             switch (_options.Moderate)
             {
@@ -81,9 +79,9 @@ namespace Microsoft.TeamsAI.AI.Moderator
             AnalyzeTextOptions analyzeTextOptions = new(text);
             if (_options.Categories != null)
             {
-                foreach (TextCategory category in _options.Categories)
+                foreach (AzureContentSafetyTextCategory category in _options.Categories)
                 {
-                    analyzeTextOptions.Categories.Add(category);
+                    analyzeTextOptions.Categories.Add(category.ToTextCategory());
                 }
             }
             if (_options.BlocklistNames != null)
@@ -94,28 +92,47 @@ namespace Microsoft.TeamsAI.AI.Moderator
                 }
             }
 
-            Response<AnalyzeTextResult> response = await _client.AnalyzeTextAsync(analyzeTextOptions);
-
-            bool flagged = response.Value.BlocklistsMatchResults.Count > 0
-            || _ShouldBeFlagged(response.Value.HateResult)
-            || _ShouldBeFlagged(response.Value.SelfHarmResult)
-            || _ShouldBeFlagged(response.Value.SexualResult)
-            || _ShouldBeFlagged(response.Value.ViolenceResult);
-            if (flagged)
+            try
             {
-                string actionName = isModelInput ? DefaultActionTypes.FlaggedInputActionName : DefaultActionTypes.FlaggedOutputActionName;
+                Response<AnalyzeTextResult> response = await _client.AnalyzeTextAsync(analyzeTextOptions);
 
-                // Flagged
-                return new Plan()
+                bool flagged = response.Value.BlocklistsMatchResults.Count > 0
+                || _ShouldBeFlagged(response.Value.HateResult)
+                || _ShouldBeFlagged(response.Value.SelfHarmResult)
+                || _ShouldBeFlagged(response.Value.SexualResult)
+                || _ShouldBeFlagged(response.Value.ViolenceResult);
+                if (flagged)
                 {
-                    Commands = new List<IPredictedCommand>
+                    string actionName = isModelInput ? AIConstants.FlaggedInputActionName : AIConstants.FlaggedOutputActionName;
+
+                    // Flagged
+                    return new Plan()
+                    {
+                        Commands = new List<IPredictedCommand>
                             {
-                                new PredictedDoCommand(actionName, new Dictionary<string, object>
+                                new PredictedDoCommand(actionName, new Dictionary<string, object?>
                                 {
-                                    { "Result", response.Value }
+                                    { "Result", BuildModerationResult(response.Value) }
                                 })
                             }
-                };
+                    };
+                }
+
+            }
+            catch (RequestFailedException e)
+            {
+                // Http error
+                if (e.Status == 429)
+                {
+                    return new Plan()
+                    {
+                        Commands = new List<IPredictedCommand>
+                        {
+                            new PredictedDoCommand(AIConstants.HttpErrorActionName)
+                        }
+                    };
+                }
+                throw;
             }
 
             return null;
@@ -124,6 +141,40 @@ namespace Microsoft.TeamsAI.AI.Moderator
         private bool _ShouldBeFlagged(TextAnalyzeSeverityResult result)
         {
             return result != null && result.Severity >= _options.SeverityLevel;
+        }
+
+        private ModerationResult BuildModerationResult(AnalyzeTextResult result)
+        {
+            bool hate = _ShouldBeFlagged(result.HateResult);
+            bool selfHarm = _ShouldBeFlagged(result.SelfHarmResult);
+            bool sexual = _ShouldBeFlagged(result.SexualResult);
+            bool violence = _ShouldBeFlagged(result.ViolenceResult);
+
+            return new()
+            {
+                Flagged = true,
+                CategoriesFlagged = new()
+                {
+                    Hate = hate,
+                    HateThreatening = hate,
+                    SelfHarm = selfHarm,
+                    Sexual = sexual,
+                    SexualMinors = sexual,
+                    Violence = violence,
+                    ViolenceGraphic = violence
+                },
+                CategoryScores = new()
+                {
+                    // Normalize the scores to be between 0 and 1 (highest severity is 6)
+                    Hate = (result.HateResult?.Severity ?? 0) / 6.0,
+                    HateThreatening = (result.HateResult?.Severity ?? 0) / 6.0,
+                    SelfHarm = (result.SelfHarmResult?.Severity ?? 0) / 6.0,
+                    Sexual = (result.SexualResult?.Severity ?? 0) / 6.0,
+                    SexualMinors = (result.SexualResult?.Severity ?? 0) / 6.0,
+                    Violence = (result.ViolenceResult?.Severity ?? 0) / 6.0,
+                    ViolenceGraphic = (result.ViolenceResult?.Severity ?? 0) / 6.0
+                }
+            };
         }
     }
 }

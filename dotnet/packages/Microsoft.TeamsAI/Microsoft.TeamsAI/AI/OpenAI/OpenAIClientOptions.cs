@@ -1,9 +1,9 @@
-﻿namespace Microsoft.TeamsAI.AI.OpenAI
+﻿namespace Microsoft.Teams.AI.AI.OpenAI
 {
     /// <summary>
     /// Options for the OpenAI client.
     /// </summary>
-    public class OpenAIClientOptions
+    internal class OpenAIClientOptions
     {
         /// <summary>
         /// OpenAI API key.

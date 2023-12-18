@@ -1,25 +1,31 @@
-﻿using System.Net;
+﻿using System.Collections.Specialized;
+using System.Net;
+using System.Runtime.CompilerServices;
 using System.Runtime.Serialization;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Web;
 using Microsoft.Extensions.Logging;
-using Microsoft.TeamsAI.AI.Moderator;
-using Microsoft.TeamsAI.Exceptions;
-using Microsoft.TeamsAI.Utilities;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Teams.AI.AI.Moderator;
+using Microsoft.Teams.AI.Exceptions;
+using Microsoft.Teams.AI.Utilities;
 
-namespace Microsoft.TeamsAI.AI.OpenAI
+// For Unit Tests - so the Moq framework can mock internal classes
+[assembly: InternalsVisibleTo("DynamicProxyGenAssembly2")]
+namespace Microsoft.Teams.AI.AI.OpenAI
 {
     /// <summary>
     /// The client to make calls to OpenAI's API
     /// </summary>
-    public class OpenAIClient
+    internal partial class OpenAIClient
     {
         private const string HttpUserAgent = "Microsoft Teams AI";
         private const string OpenAIModerationEndpoint = "https://api.openai.com/v1/moderations";
 
         private HttpClient _httpClient;
-        private ILogger? _logger;
+        private ILogger _logger;
         private OpenAIClientOptions _options;
         private static readonly JsonSerializerOptions _serializerOptions = new()
         {
@@ -30,12 +36,12 @@ namespace Microsoft.TeamsAI.AI.OpenAI
         /// Creates a new instance of the <see cref="OpenAIClient"/> class.
         /// </summary>
         /// <param name="options">The OpenAI client options.</param>
-        /// <param name="logger">The logger instance.</param>
-        /// <param name="httpClient">The HTTP client instance.</param>
-        public OpenAIClient(OpenAIClientOptions options, ILogger? logger = null, HttpClient? httpClient = null)
+        /// <param name="loggerFactory">Optional. The logger factory instance.</param>
+        /// <param name="httpClient">Optional. The HTTP client instance.</param>
+        public OpenAIClient(OpenAIClientOptions options, ILoggerFactory? loggerFactory = null, HttpClient? httpClient = null)
         {
             _httpClient = httpClient ?? DefaultHttpClient.Instance;
-            _logger = logger;
+            _logger = loggerFactory is null ? NullLogger.Instance : loggerFactory.CreateLogger(typeof(OpenAIClient));
             _options = options;
         }
 
@@ -44,9 +50,11 @@ namespace Microsoft.TeamsAI.AI.OpenAI
         /// </summary>
         /// <param name="text">The input text to moderate.</param>
         /// <param name="model">The moderation model to use.</param>
+        /// <param name="cancellationToken">A cancellation token that can be used by other objects
+        /// or threads to receive notice of cancellation.</param>
         /// <returns>The moderation result from the API call.</returns>
         /// <exception cref="HttpOperationException" />
-        public virtual async Task<ModerationResponse> ExecuteTextModeration(string text, string? model)
+        public virtual async Task<ModerationResponse> ExecuteTextModerationAsync(string text, string? model, CancellationToken cancellationToken = default)
         {
             try
             {
@@ -60,7 +68,7 @@ namespace Microsoft.TeamsAI.AI.OpenAI
                     "application/json"
                 );
 
-                using HttpResponseMessage httpResponse = await _ExecutePostRequest(OpenAIModerationEndpoint, content);
+                using HttpResponseMessage httpResponse = await _ExecutePostRequestAsync(OpenAIModerationEndpoint, content, null, cancellationToken);
 
                 string responseJson = await httpResponse.Content.ReadAsStringAsync();
                 ModerationResponse result = JsonSerializer.Deserialize<ModerationResponse>(responseJson) ?? throw new SerializationException($"Failed to deserialize moderation result response json: {content}");
@@ -77,7 +85,67 @@ namespace Microsoft.TeamsAI.AI.OpenAI
             }
         }
 
-        private async Task<HttpResponseMessage> _ExecutePostRequest(string url, HttpContent? content, CancellationToken cancellationToken = default)
+        private async Task<HttpResponseMessage> _ExecuteGetRequestAsync(
+            string url,
+            IEnumerable<KeyValuePair<string, string>>? queries = null,
+            IEnumerable<KeyValuePair<string, string>>? additionalHeaders = null,
+            CancellationToken cancellationToken = default)
+        {
+            HttpResponseMessage? response = null;
+
+            UriBuilder uriBuilder = new(url);
+            if (queries != null)
+            {
+                NameValueCollection queryCollection = HttpUtility.ParseQueryString(uriBuilder.Query);
+                foreach (KeyValuePair<string, string> query in queries)
+                {
+                    queryCollection.Add(query.Key, query.Value);
+                }
+                uriBuilder.Query = queryCollection.ToString();
+            }
+
+            using (HttpRequestMessage request = new(HttpMethod.Get, uriBuilder.ToString()))
+            {
+                request.Headers.Add("Accept", "application/json");
+                request.Headers.Add("User-Agent", HttpUserAgent);
+                request.Headers.Add("Authorization", $"Bearer {_options.ApiKey}");
+
+                if (_options.Organization != null)
+                {
+                    request.Headers.Add("OpenAI-Organization", _options.Organization);
+                }
+
+                if (additionalHeaders != null)
+                {
+                    foreach (KeyValuePair<string, string> header in additionalHeaders)
+                    {
+                        request.Headers.Add(header.Key, header.Value);
+                    }
+                }
+
+                response = await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
+            }
+
+            _logger.LogTrace($"HTTP response: {(int)response.StatusCode} {response.StatusCode:G}");
+
+            // Throw an exception if not a success status code
+            if (response.IsSuccessStatusCode)
+            {
+                return response;
+            }
+
+            HttpStatusCode statusCode = response.StatusCode;
+            string failureReason = response.ReasonPhrase;
+            response?.Dispose();
+
+            throw new HttpOperationException($"HTTP response failure status code: {(int)statusCode} ({failureReason})", statusCode, failureReason);
+        }
+
+        private async Task<HttpResponseMessage> _ExecutePostRequestAsync(
+            string url,
+            HttpContent? content,
+            IEnumerable<KeyValuePair<string, string>>? additionalHeaders = null,
+            CancellationToken cancellationToken = default)
         {
             HttpResponseMessage? response = null;
 
@@ -92,6 +160,14 @@ namespace Microsoft.TeamsAI.AI.OpenAI
                     request.Headers.Add("OpenAI-Organization", _options.Organization);
                 }
 
+                if (additionalHeaders != null)
+                {
+                    foreach (KeyValuePair<string, string> header in additionalHeaders)
+                    {
+                        request.Headers.Add(header.Key, header.Value);
+                    }
+                }
+
                 if (content != null)
                 {
                     request.Content = content;
@@ -100,7 +176,7 @@ namespace Microsoft.TeamsAI.AI.OpenAI
                 response = await _httpClient.SendAsync(request, cancellationToken).ConfigureAwait(false);
             }
 
-            _logger?.LogTrace($"HTTP response: {(int)response.StatusCode} {response.StatusCode:G}");
+            _logger.LogTrace($"HTTP response: {(int)response.StatusCode} {response.StatusCode:G}");
 
             // Throw an exception if not a success status code
             if (response.IsSuccessStatusCode)

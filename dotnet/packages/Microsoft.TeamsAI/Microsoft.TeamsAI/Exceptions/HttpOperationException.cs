@@ -1,11 +1,11 @@
 ﻿using System.Net;
 
-namespace Microsoft.TeamsAI.Exceptions
+namespace Microsoft.Teams.AI.Exceptions
 {
     /// <summary>
     /// Exception thrown when an HTTP operation fails.
     /// </summary>
-    public class HttpOperationException : Exception
+    public sealed class HttpOperationException : Exception
     {
         /// <summary>
         /// HTTP status code.
@@ -30,12 +30,12 @@ namespace Microsoft.TeamsAI.Exceptions
         }
 
         /// <summary>
-        /// Checks status code is a rate limit status code.
+        /// Checks status code is a http error status code.
         /// </summary>
-        /// <returns>Returns true if the status code is a rate limit status code.</returns>
-        internal bool isRateLimitedStatusCode()
+        /// <returns>Returns true if the status code is a http error status code.</returns>
+        internal bool isHttpErrorStatusCode()
         {
-            /// HttpStatusCode.TooManyRequests is not available in .NET Standard 2.0, this is a workaround.
+            // HttpStatusCode.TooManyRequests is not available in .NET Standard 2.0, this is a workaround.
             return StatusCode == (HttpStatusCode)429;
         }
     }

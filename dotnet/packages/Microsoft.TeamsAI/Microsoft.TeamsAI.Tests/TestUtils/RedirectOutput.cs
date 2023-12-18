@@ -2,7 +2,7 @@
 using System.Text;
 using Xunit.Abstractions;
 
-namespace Microsoft.TeamsAI.Tests.TestUtils
+namespace Microsoft.Teams.AI.Tests.TestUtils
 {
     public class RedirectOutput : TextWriter, ILogger
     {
@@ -43,7 +43,8 @@ namespace Microsoft.TeamsAI.Tests.TestUtils
             return true;
         }
 
-        public IDisposable? BeginScope<TState>(TState state) where TState : notnull
+#pragma warning disable CS8766 // Resolve nullable warnings
+        public IDisposable? BeginScope<TState>(TState state)
         {
             return null;
         }

@@ -1,62 +1,60 @@
-﻿using AdaptiveCards;
-using Microsoft.TeamsAI.AI.Planner;
-using Microsoft.TeamsAI.Exceptions;
-using Microsoft.TeamsAI.State;
-using Microsoft.TeamsAI.Utilities;
+﻿using Microsoft.Teams.AI.AI.Planners;
+using Microsoft.Teams.AI.Exceptions;
+using Microsoft.Teams.AI.State;
+using Microsoft.Teams.AI.Utilities;
 using Microsoft.Bot.Connector;
-using Microsoft.Bot.Schema;
 using Microsoft.Extensions.Logging;
 using Microsoft.Bot.Builder;
+using Microsoft.Extensions.Logging.Abstractions;
 
-namespace Microsoft.TeamsAI.AI.Action
+namespace Microsoft.Teams.AI.AI.Action
 {
-
-    internal class DefaultActions<TState> where TState : ITurnState<StateBase, StateBase, TempState>
+    internal class DefaultActions<TState> where TState : TurnState
     {
-        private readonly ILogger? _logger;
+        private readonly ILogger _logger;
 
-        public DefaultActions(ILogger? logger)
+        public DefaultActions(ILoggerFactory? loggerFactory = null)
         {
-            _logger = logger;
+            _logger = loggerFactory is null ? NullLogger.Instance : loggerFactory.CreateLogger(typeof(DefaultActions<TState>));
         }
 
-        [Action(DefaultActionTypes.UnknownActionName)]
-        public Task<bool> UnknownAction([ActionName] string action)
+        [Action(AIConstants.UnknownActionName, isDefault: true)]
+        public Task<string> UnknownAction([ActionName] string action)
         {
-            _logger?.LogError($"An AI action named \"{action}\" was predicted but no handler was registered");
-            return Task.FromResult(true);
+            _logger.LogError($"An AI action named \"{action}\" was predicted but no handler was registered");
+            return Task.FromResult(AIConstants.StopCommand);
         }
 
-        [Action(DefaultActionTypes.FlaggedInputActionName)]
-        public Task<bool> FlaggedInputAction()
+        [Action(AIConstants.FlaggedInputActionName, isDefault: true)]
+        public Task<string> FlaggedInputAction()
         {
-            _logger?.LogError($"The users input has been moderated but no handler was registered for {DefaultActionTypes.FlaggedInputActionName}");
-            return Task.FromResult(true);
+            _logger.LogError($"The users input has been moderated but no handler was registered for {AIConstants.FlaggedInputActionName}");
+            return Task.FromResult(AIConstants.StopCommand);
         }
 
-        [Action(DefaultActionTypes.FlaggedOutputActionName)]
-        public Task<bool> FlaggedOutputAction()
+        [Action(AIConstants.FlaggedOutputActionName, isDefault: true)]
+        public Task<string> FlaggedOutputAction()
         {
-            _logger?.LogError($"The bots output has been moderated but no handler was registered for {DefaultActionTypes.FlaggedOutputActionName}");
-            return Task.FromResult(true);
+            _logger.LogError($"The bots output has been moderated but no handler was registered for {AIConstants.FlaggedOutputActionName}");
+            return Task.FromResult(AIConstants.StopCommand);
         }
 
-        [Action(DefaultActionTypes.RateLimitedActionName)]
-        public Task<bool> RateLimitedAction()
+        [Action(AIConstants.HttpErrorActionName, isDefault: true)]
+        public Task<string> HttpErrorAction()
         {
-            throw new TeamsAIException("An AI request failed because it was rate limited");
+            throw new TeamsAIException("An AI http request failed");
         }
 
-        [Action(DefaultActionTypes.PlanReadyActionName)]
-        public Task<bool> PlanReadyAction([ActionEntities] Plan plan)
+        [Action(AIConstants.PlanReadyActionName, isDefault: true)]
+        public Task<string> PlanReadyAction([ActionParameters] Plan plan)
         {
             Verify.ParamNotNull(plan);
 
-            return Task.FromResult(plan.Commands.Count > 0);
+            return Task.FromResult(plan.Commands.Count > 0 ? string.Empty : AIConstants.StopCommand);
         }
 
-        [Action(DefaultActionTypes.DoCommandActionName)]
-        public Task<bool> DoCommand([ActionTurnContext] ITurnContext turnContext, [ActionTurnState] TState turnState, [ActionEntities] DoCommandActionData<TState> doCommandActionData)
+        [Action(AIConstants.DoCommandActionName, isDefault: true)]
+        public async Task<string> DoCommandAsync([ActionTurnContext] ITurnContext turnContext, [ActionTurnState] TState turnState, [ActionParameters] DoCommandActionData<TState> doCommandActionData, CancellationToken cancellationToken = default)
         {
             Verify.ParamNotNull(doCommandActionData);
 
@@ -72,39 +70,38 @@ namespace Microsoft.TeamsAI.AI.Action
 
             IActionHandler<TState> handler = doCommandActionData.Handler;
 
-            return handler.PerformAction(turnContext, turnState, doCommandActionData.PredictedDoCommand.Entities, doCommandActionData.PredictedDoCommand.Action);
+            return await handler.PerformActionAsync(turnContext, turnState, doCommandActionData.PredictedDoCommand.Parameters, doCommandActionData.PredictedDoCommand.Action, cancellationToken);
         }
 
-        [Action(DefaultActionTypes.SayCommandActionName)]
-        public async Task<bool> SayCommand([ActionTurnContext] ITurnContext turnContext, [ActionEntities] PredictedSayCommand command)
+        [Action(AIConstants.SayCommandActionName, isDefault: true)]
+        public async Task<string> SayCommandAsync([ActionTurnContext] ITurnContext turnContext, [ActionParameters] PredictedSayCommand command, CancellationToken cancellationToken = default)
         {
             Verify.ParamNotNull(command);
 
             string response = command.Response;
-            AdaptiveCardParseResult? card = ResponseParser.ParseAdaptiveCard(response);
-
-            if (card != null)
+            if (turnContext.Activity.ChannelId == Channels.Msteams)
             {
-                if (card.Warnings.Count > 0)
-                {
-                    string warnings = string.Join("\n", card.Warnings.Select(w => w.Message));
-                    _logger?.LogWarning($"{card.Warnings.Count} warnings found in the model generated adaptive card:\n {warnings}");
-                }
-
-                Attachment attachment = new() { Content = card.Card, ContentType = AdaptiveCard.ContentType };
-                IMessageActivity activity = MessageFactory.Attachment(attachment);
-                await turnContext.SendActivityAsync(activity);
-            }
-            else if (turnContext.Activity.ChannelId == Channels.Msteams)
-            {
-                await turnContext.SendActivityAsync(response.Replace("\n", "<br>"));
+                await turnContext.SendActivityAsync(response.Replace("\n", "<br>"), null, null, cancellationToken);
             }
             else
             {
-                await turnContext.SendActivityAsync(response);
+                await turnContext.SendActivityAsync(response, null, null, cancellationToken);
             };
 
-            return true;
+            return string.Empty;
+        }
+
+        [Action(AIConstants.TooManyStepsActionName, isDefault: true)]
+        public Task<string> TooManyStepsAction([ActionParameters] TooManyStepsParameters parameters)
+        {
+            if (parameters.StepCount > parameters.MaxSteps)
+            {
+                throw new TeamsAIException("The AI system has exceeded the maximum number of steps allowed.");
+            }
+            else
+            {
+                throw new TeamsAIException("The AI system has exceeded the maximum amount of time allowed.");
+            }
         }
     }
 }

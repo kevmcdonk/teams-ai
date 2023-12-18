@@ -1,19 +1,19 @@
 {
-  "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.16/MicrosoftTeams.schema.json",
+  "$schema": "https://developer.microsoft.com/json-schemas/teams/v1.16/MicrosoftTeams.schema.json",
   "version": "1.0.2",
   "manifestVersion": "1.16",
-  "id": "<<YOUR-MICROSOFT-APP-ID>>",
+  "id": "${{TEAMS_APP_ID}}",
   "packageName": "com.package.name",
   "name": {
-    "short": "DevOps Bot",
+    "short": "DevOps Bot-${{TEAMSFX_ENV}}",
     "full": "DevOps Bot"
   },
   "developer": {
-    "name": "microsoft",
+    "name": "Microsoft",
     "mpnId": "",
-    "websiteUrl": "https://microsoft.com",
-    "privacyUrl": "https://microsoft.com/privacy",
-    "termsOfUseUrl": "https://microsoft.com/termsofuse"
+    "websiteUrl": "https://teams.microsoft.com",
+    "privacyUrl": "https://privacy.microsoft.com/privacystatement",
+    "termsOfUseUrl": "https://www.microsoft.com/legal/terms-of-use"
   },
   "description": {
     "short": "Sample AI bot for managing list of work items",
@@ -40,7 +40,7 @@
   ],
   "bots": [
     {
-      "botId": "<<YOUR-MICROSOFT-APP-ID>>",
+      "botId": "${{BOT_ID}}",
       "scopes": [
         "personal",
         "team",

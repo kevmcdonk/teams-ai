@@ -1,14 +1,15 @@
 ﻿using System.Text.Json;
 using System.Text.Json.Serialization;
-using Microsoft.TeamsAI.AI;
-using Microsoft.TeamsAI.AI.Planner;
+using Microsoft.Teams.AI.AI;
+using Microsoft.Teams.AI.AI.Planners;
 
-namespace Microsoft.TeamsAI.Utilities.JsonConverters
+namespace Microsoft.Teams.AI.Utilities.JsonConverters
 {
     internal class PredictedCommandJsonConverter : JsonConverter<IPredictedCommand>
     {
         private static JsonEncodedText _typePropertyName = JsonEncodedText.Encode("type");
-        private static JsonEncodedText _entitiesPropertyName = JsonEncodedText.Encode("entities");
+        private static JsonEncodedText _actionPropertyName = JsonEncodedText.Encode("action");
+        private static JsonEncodedText _parametersPropertyName = JsonEncodedText.Encode("parameters");
         private static JsonEncodedText _responsePropertyName = JsonEncodedText.Encode("response");
 
         public override bool CanConvert(Type typeToConvert)
@@ -48,8 +49,8 @@ namespace Microsoft.TeamsAI.Utilities.JsonConverters
 
             IPredictedCommand predictedCommand = (commandType?.ToUpperInvariant()) switch
             {
-                AITypes.DoCommand => JsonSerializer.Deserialize<PredictedDoCommand>(ref reader)!,
-                AITypes.SayCommand => JsonSerializer.Deserialize<PredictedSayCommand>(ref reader)!,
+                AIConstants.DoCommand => JsonSerializer.Deserialize<PredictedDoCommand>(ref reader)!,
+                AIConstants.SayCommand => JsonSerializer.Deserialize<PredictedSayCommand>(ref reader)!,
                 _ => throw new JsonException($"Unknown command type `{commandType}`")
             };
 
@@ -66,15 +67,19 @@ namespace Microsoft.TeamsAI.Utilities.JsonConverters
 
             if (command == typeof(PredictedDoCommand))
             {
-                writer.WriteStringValue(AITypes.DoCommand);
+                writer.WriteStringValue(AIConstants.DoCommand);
 
-                writer.WritePropertyName(_entitiesPropertyName);
+                writer.WritePropertyName(_actionPropertyName);
 
-                JsonSerializer.Serialize(writer, ((PredictedDoCommand)value).Entities, options);
+                JsonSerializer.Serialize(writer, ((PredictedDoCommand)value).Action, options);
+
+                writer.WritePropertyName(_parametersPropertyName);
+
+                JsonSerializer.Serialize(writer, ((PredictedDoCommand)value).Parameters, options);
             }
             else if (command == typeof(PredictedSayCommand))
             {
-                writer.WriteStringValue(AITypes.SayCommand);
+                writer.WriteStringValue(AIConstants.SayCommand);
 
                 writer.WritePropertyName(_responsePropertyName);
 

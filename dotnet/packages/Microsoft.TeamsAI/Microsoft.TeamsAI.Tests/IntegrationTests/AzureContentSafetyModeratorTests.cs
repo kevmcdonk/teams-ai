@@ -1,17 +1,14 @@
-﻿using Microsoft.TeamsAI.AI.Moderator;
-using Microsoft.TeamsAI.AI.Planner;
-using Microsoft.TeamsAI.AI.Prompt;
-using Microsoft.TeamsAI.AI;
+﻿using Microsoft.Teams.AI.AI.Moderator;
+using Microsoft.Teams.AI.AI.Planners;
+using Microsoft.Teams.AI.AI;
 using Microsoft.Extensions.Configuration;
 using Moq;
 using System.Reflection;
-using Xunit.Abstractions;
-using Microsoft.TeamsAI.AI.Action;
 using Microsoft.Bot.Schema;
-using Microsoft.TeamsAI.State;
+using Microsoft.Teams.AI.State;
 using Microsoft.Bot.Builder;
 
-namespace Microsoft.TeamsAI.Tests.IntegrationTests
+namespace Microsoft.Teams.AI.Tests.IntegrationTests
 {
     public sealed class AzureContentSafetyModeratorTests
     {
@@ -32,7 +29,7 @@ namespace Microsoft.TeamsAI.Tests.IntegrationTests
             _configuration = new ConfigurationBuilder()
                 .AddJsonFile(path: settingsPath, optional: false, reloadOnChange: true)
                 .AddEnvironmentVariables()
-                .AddUserSecrets<AzureOpenAICompletionTests>()
+                .AddUserSecrets<AzureContentSafetyModeratorTests>()
                 .Build();
         }
 
@@ -56,17 +53,16 @@ namespace Microsoft.TeamsAI.Tests.IntegrationTests
             };
             var turnContext = new TurnContext(botAdapterMock.Object, activity);
             var turnStateMock = new Mock<TurnState>();
-            var promptTemplateMock = new Mock<PromptTemplate>(string.Empty, new PromptTemplateConfiguration());
 
             // Act
-            var result = await moderator.ReviewPrompt(turnContext, turnStateMock.Object, promptTemplateMock.Object);
+            var result = await moderator.ReviewInputAsync(turnContext, turnStateMock.Object);
 
             // Assert
             if (flagged)
             {
                 Assert.NotNull(result);
-                Assert.Equal(AITypes.DoCommand, result.Commands[0].Type);
-                Assert.Equal(DefaultActionTypes.FlaggedInputActionName, ((PredictedDoCommand)result.Commands[0]).Action);
+                Assert.Equal(AIConstants.DoCommand, result.Commands[0].Type);
+                Assert.Equal(AIConstants.FlaggedInputActionName, ((PredictedDoCommand)result.Commands[0]).Action);
             }
             else
             {
@@ -92,17 +88,17 @@ namespace Microsoft.TeamsAI.Tests.IntegrationTests
             });
 
             // Act
-            var result = await moderator.ReviewPlan(turnContextMock.Object, turnStateMock.Object, plan);
+            var result = await moderator.ReviewOutputAsync(turnContextMock.Object, turnStateMock.Object, plan);
 
             // Assert
             if (flagged)
             {
-                Assert.Equal(AITypes.DoCommand, result.Commands[0].Type);
-                Assert.Equal(DefaultActionTypes.FlaggedOutputActionName, ((PredictedDoCommand)result.Commands[0]).Action);
+                Assert.Equal(AIConstants.DoCommand, result.Commands[0].Type);
+                Assert.Equal(AIConstants.FlaggedOutputActionName, ((PredictedDoCommand)result.Commands[0]).Action);
             }
             else
             {
-                Assert.Equal(AITypes.SayCommand, result.Commands[0].Type);
+                Assert.Equal(AIConstants.SayCommand, result.Commands[0].Type);
             }
         }
     }

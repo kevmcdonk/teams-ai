@@ -1,27 +1,28 @@
-﻿using Microsoft.TeamsAI.AI.Action;
-using Microsoft.TeamsAI.AI.Moderator;
-using Microsoft.TeamsAI.AI.Planner;
-using Microsoft.TeamsAI.AI.Prompt;
-using Microsoft.TeamsAI.AI;
+﻿using Microsoft.Teams.AI.AI.Moderator;
+using Microsoft.Teams.AI.AI.Planners;
+using Microsoft.Teams.AI.AI;
 using Microsoft.Extensions.Configuration;
 using Moq;
 using System.Reflection;
 using Xunit.Abstractions;
 using Microsoft.Bot.Schema;
-using Microsoft.TeamsAI.State;
+using Microsoft.Teams.AI.State;
 using Microsoft.Bot.Builder;
-using Microsoft.TeamsAI.Tests.TestUtils;
+using Microsoft.Teams.AI.Tests.TestUtils;
+using Microsoft.Extensions.Logging;
 
-namespace Microsoft.TeamsAI.Tests.IntegrationTests
+namespace Microsoft.Teams.AI.Tests.IntegrationTests
 {
     public sealed class OpenAIModeratorTests
     {
         private readonly IConfigurationRoot _configuration;
         private readonly RedirectOutput _output;
+        private readonly ILoggerFactory _loggerFactory;
 
         public OpenAIModeratorTests(ITestOutputHelper output)
         {
             _output = new RedirectOutput(output);
+            _loggerFactory = new TestLoggerFactory(_output);
 
             var currentAssemblyDirectory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location);
 
@@ -36,10 +37,11 @@ namespace Microsoft.TeamsAI.Tests.IntegrationTests
             _configuration = new ConfigurationBuilder()
                 .AddJsonFile(path: settingsPath, optional: false, reloadOnChange: true)
                 .AddEnvironmentVariables()
-                .AddUserSecrets<AzureOpenAICompletionTests>()
+                .AddUserSecrets<OpenAIModeratorTests>()
                 .Build();
         }
 
+        // TODO: There exists a race condition bug where this test fails when running the entire test suite, but not when run in isolation.
         [Theory(Skip = "This test should only be run manually.")]
         [InlineData("I want to kill them.", true)]
         public async Task OpenAIModerator_ReviewPrompt(string input, bool flagged)
@@ -47,7 +49,7 @@ namespace Microsoft.TeamsAI.Tests.IntegrationTests
             // Arrange
             var config = _configuration.GetSection("OpenAI").Get<OpenAIConfiguration>();
             var options = new OpenAIModeratorOptions(config.ApiKey, ModerationType.Both);
-            var moderator = new OpenAIModerator<TurnState>(options, _output);
+            var moderator = new OpenAIModerator<TurnState>(options, _loggerFactory);
 
             var botAdapterMock = new Mock<BotAdapter>();
             // TODO: when TurnState is implemented, get the user input
@@ -57,17 +59,16 @@ namespace Microsoft.TeamsAI.Tests.IntegrationTests
             };
             var turnContext = new TurnContext(botAdapterMock.Object, activity);
             var turnStateMock = new Mock<TurnState>();
-            var promptTemplateMock = new Mock<PromptTemplate>(String.Empty, new PromptTemplateConfiguration());
 
             // Act
-            var result = await moderator.ReviewPrompt(turnContext, turnStateMock.Object, promptTemplateMock.Object);
+            var result = await moderator.ReviewInputAsync(turnContext, turnStateMock.Object);
 
             // Assert
             if (flagged)
             {
                 Assert.NotNull(result);
-                Assert.Equal(AITypes.DoCommand, result.Commands[0].Type);
-                Assert.Equal(DefaultActionTypes.FlaggedInputActionName, ((PredictedDoCommand)result.Commands[0]).Action);
+                Assert.Equal(AIConstants.DoCommand, result.Commands[0].Type);
+                Assert.Equal(AIConstants.FlaggedInputActionName, ((PredictedDoCommand)result.Commands[0]).Action);
             }
             else
             {
@@ -82,7 +83,7 @@ namespace Microsoft.TeamsAI.Tests.IntegrationTests
             // Arrange
             var config = _configuration.GetSection("OpenAI").Get<OpenAIConfiguration>();
             var options = new OpenAIModeratorOptions(config.ApiKey, ModerationType.Both);
-            var moderator = new OpenAIModerator<TurnState>(options, _output);
+            var moderator = new OpenAIModerator<TurnState>(options, _loggerFactory);
 
             var turnContextMock = new Mock<ITurnContext>();
             var turnStateMock = new Mock<TurnState>();
@@ -92,17 +93,17 @@ namespace Microsoft.TeamsAI.Tests.IntegrationTests
             });
 
             // Act
-            var result = await moderator.ReviewPlan(turnContextMock.Object, turnStateMock.Object, plan);
+            var result = await moderator.ReviewOutputAsync(turnContextMock.Object, turnStateMock.Object, plan);
 
             // Assert
             if (flagged)
             {
-                Assert.Equal(AITypes.DoCommand, result.Commands[0].Type);
-                Assert.Equal(DefaultActionTypes.FlaggedOutputActionName, ((PredictedDoCommand)result.Commands[0]).Action);
+                Assert.Equal(AIConstants.DoCommand, result.Commands[0].Type);
+                Assert.Equal(AIConstants.FlaggedOutputActionName, ((PredictedDoCommand)result.Commands[0]).Action);
             }
             else
             {
-                Assert.Equal(AITypes.SayCommand, result.Commands[0].Type);
+                Assert.Equal(AIConstants.SayCommand, result.Commands[0].Type);
             }
         }
     }

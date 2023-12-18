@@ -1,8 +1,8 @@
-﻿using Microsoft.TeamsAI.Utilities;
+﻿using Microsoft.Teams.AI.Utilities;
 using Microsoft.Bot.Schema;
 using Microsoft.Bot.Builder;
 
-namespace Microsoft.TeamsAI
+namespace Microsoft.Teams.AI
 {
     /// <summary>
     /// Encapsulates the logic for sending "typing" activity to the user.
@@ -48,7 +48,7 @@ namespace Microsoft.TeamsAI
             }
 
             // Listen for outgoing activities
-            turnContext.OnSendActivities(StopTimerWhenSendMessageActivityHandler);
+            turnContext.OnSendActivities(StopTimerWhenSendMessageActivityHandlerAsync);
 
             // Start periodically send "typing" activity
             _timer = new Timer(SendTypingActivity, turnContext, Timeout.Infinite, Timeout.Infinite);
@@ -115,7 +115,7 @@ namespace Microsoft.TeamsAI
             }
         }
 
-        private Task<ResourceResponse[]> StopTimerWhenSendMessageActivityHandler(ITurnContext turnContext, List<Activity> activities, Func<Task<ResourceResponse[]>> next)
+        private Task<ResourceResponse[]> StopTimerWhenSendMessageActivityHandlerAsync(ITurnContext turnContext, List<Activity> activities, Func<Task<ResourceResponse[]>> next)
         {
             if (_timer != null)
             {

@@ -16,6 +16,10 @@ import {
     TurnContext
 } from 'botbuilder';
 
+// Read botFilePath and botFileSecret from .env file.
+const ENV_FILE = path.join(__dirname, '..', '.env');
+config({ path: ENV_FILE });
+
 const botFrameworkAuthentication = new ConfigurationBotFrameworkAuthentication(
     {},
     new ConfigurationServiceClientCredentialFactory({
@@ -35,6 +39,7 @@ const onTurnErrorHandler = async (context: TurnContext, error: any) => {
     // NOTE: In production environment, you should consider logging this to Azure
     //       application insights.
     console.error(`\n [onTurnError] unhandled error: ${error}`);
+    console.log(error);
 
     // Send a trace activity, which will be displayed in Bot Framework Emulator
     await context.sendTraceActivity(
@@ -62,39 +67,43 @@ server.listen(process.env.port || process.env.PORT || 3978, () => {
     console.log('\nTo test your bot in Teams, sideload the app manifest.json within Teams Apps.');
 });
 
-import {
-    AI,
-    Application,
-    AzureOpenAIPlanner,
-    ConversationHistory,
-    DefaultPromptManager,
-    DefaultTurnState,
-    OpenAIModerator,
-    OpenAIPlanner
-} from '@microsoft/teams-ai';
+import { AI, Application, ActionPlanner, OpenAIModel, PromptManager, TurnState } from '@microsoft/teams-ai';
+import { addResponseFormatter } from './responseFormatter';
+import { VectraDataSource } from './VectraDataSource';
 
 // eslint-disable-next-line @typescript-eslint/no-empty-interface
 interface ConversationState {}
-type ApplicationTurnState = DefaultTurnState<ConversationState>;
+type ApplicationTurnState = TurnState<ConversationState>;
+
+if (!process.env.OPENAI_KEY && !process.env.AZURE_OPENAI_KEY) {
+    throw new Error('Missing environment variables - please check that OPENAI_KEY or AZURE_OPENAI_KEY is set.');
+}
 
 // Create AI components
-const planner = new OpenAIPlanner({
-    apiKey: process.env.OPENAI_API_KEY || '',
-    defaultModel: 'text-davinci-003',
+const model = new OpenAIModel({
+    // OpenAI Support
+    apiKey: process.env.OPENAI_KEY!,
+    defaultModel: 'gpt-3.5-turbo',
+
+    // Azure OpenAI Support
+    azureApiKey: process.env.AZURE_OPENAI_KEY!,
+    azureDefaultDeployment: 'gpt-3.5-turbo',
+    azureEndpoint: process.env.AZURE_OPENAI_ENDPOINT!,
+    azureApiVersion: '2023-03-15-preview',
+
+    // Request logging
     logRequests: true
 });
-// const planner = new AzureOpenAIPlanner({
-//     apiKey: process.env.AzureOpenAIKey || '',
-//     defaultModel: 'gpt-3.5-turbo',
-//     endpoint: process.env.AzureOpenAIEndpoint || '',
-//     apiVersion: '2023-03-15-preview'
-// });
 
-// const moderator = new OpenAIModerator({
-//     apiKey: process.env.OPENAI_API_KEY || '',
-//     moderate: 'both'
-// });
-const promptManager = new DefaultPromptManager(path.join(__dirname, '../src/prompts'));
+const prompts = new PromptManager({
+    promptsFolder: path.join(__dirname, '../src/prompts')
+});
+
+const planner = new ActionPlanner({
+    model,
+    prompts,
+    defaultPrompt: 'chat',
+});
 
 // Define storage and application
 const storage = new MemoryStorage();
@@ -102,31 +111,31 @@ const app = new Application<ApplicationTurnState>({
     storage,
     ai: {
         planner,
-        // moderator,
-        promptManager,
-        prompt: 'chat',
-        history: {
-            assistantHistoryType: 'text'
-        }
     }
 });
 
+// Register your data source with planner
+planner.prompts.addDataSource(new VectraDataSource({
+    name: 'teams-ai',
+    apiKey:  process.env.OPENAI_KEY!,
+    indexFolder: path.join(__dirname, '../index'),
+}));
+
+// Add a custom response formatter to convert markdown code blocks to <pre> tags
+addResponseFormatter(app);
+
+// Register other AI actions
 app.ai.action(
     AI.FlaggedInputActionName,
     async (context: TurnContext, state: ApplicationTurnState, data: Record<string, any>) => {
         await context.sendActivity(`I'm sorry your message was flagged: ${JSON.stringify(data)}`);
-        return false;
+        return AI.StopCommandName;
     }
 );
 
 app.ai.action(AI.FlaggedOutputActionName, async (context: TurnContext, state: ApplicationTurnState, data: any) => {
     await context.sendActivity(`I'm not allowed to talk about such things.`);
-    return false;
-});
-
-app.message('/history', async (context: TurnContext, state: ApplicationTurnState) => {
-    const history = ConversationHistory.toString(state, 2000, '\n\n');
-    await context.sendActivity(history);
+    return AI.StopCommandName;
 });
 
 // Listen for incoming server requests.

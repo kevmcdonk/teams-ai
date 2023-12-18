@@ -3,10 +3,10 @@ using ListBot.Model;
 using Microsoft.Bot.Builder;
 using Microsoft.Bot.Builder.Integration.AspNet.Core;
 using Microsoft.Bot.Connector.Authentication;
-using Microsoft.TeamsAI;
-using Microsoft.TeamsAI.AI;
-using Microsoft.TeamsAI.AI.Planner;
-using Microsoft.TeamsAI.AI.Prompt;
+using Microsoft.Teams.AI;
+using Microsoft.Teams.AI.AI.Models;
+using Microsoft.Teams.AI.AI.Planners;
+using Microsoft.Teams.AI.AI.Prompts;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -32,75 +32,70 @@ builder.Services.AddSingleton<BotAdapter>(sp => sp.GetService<CloudAdapter>()!);
 
 builder.Services.AddSingleton<IStorage, MemoryStorage>();
 
-#region Use OpenAI
-if (config.OpenAI == null || string.IsNullOrEmpty(config.OpenAI.ApiKey))
+// Create AI Model
+if (!string.IsNullOrEmpty(config.OpenAI?.ApiKey))
 {
-    throw new Exception("Missing OpenAI configuration.");
+    builder.Services.AddSingleton<OpenAIModel>(sp => new(
+        new OpenAIModelOptions(config.OpenAI.ApiKey, "gpt-3.5-turbo")
+        {
+            LogRequests = true
+        },
+        sp.GetService<ILoggerFactory>()
+    ));
 }
-
-builder.Services.AddSingleton(_ => new OpenAIPlannerOptions(config.OpenAI.ApiKey, "text-davinci-003")
+else if (!string.IsNullOrEmpty(config.Azure?.OpenAIApiKey) && !string.IsNullOrEmpty(config.Azure.OpenAIEndpoint))
 {
-    LogRequests = true
-});
+    builder.Services.AddSingleton<OpenAIModel>(sp => new(
+        new AzureOpenAIModelOptions(
+            config.Azure.OpenAIApiKey,
+            "gpt-35-turbo",
+            config.Azure.OpenAIEndpoint
+        )
+        {
+            LogRequests = true
+        },
+        sp.GetService<ILoggerFactory>()
+    ));
+}
+else
+{
+    throw new Exception("please configure settings for either OpenAI or Azure");
+}
 
 // Create the Application.
 builder.Services.AddTransient<IBot, ListBotApplication>(sp =>
 {
+    // Create loggers
     ILoggerFactory loggerFactory = sp.GetService<ILoggerFactory>()!;
 
-    PromptManager<ListState> promptManager = new("./Prompts");
+    PromptManager prompts = new(new() { PromptFolder = "./Prompts" });
 
-    OpenAIPlanner<ListState> planner = new(sp.GetService<OpenAIPlannerOptions>()!, loggerFactory.CreateLogger<OpenAIPlanner<ListState>>());
+    // Create OpenAIPlanner
+    ActionPlanner<ListState> planner = new(
+        new(
+            sp.GetService<OpenAIModel>()!,
+            prompts,
+            async (context, state, planner) =>
+            {
+                return await Task.FromResult(prompts.GetPrompt("Monologue"));
+            }
+        ),
+        loggerFactory
+    );
 
-    ApplicationOptions<ListState, ListStateManager> applicationOptions = new()
+    ListBotApplication app = new(new()
     {
-        AI = new AIOptions<ListState>(planner, promptManager)
-        {
-            Prompt = "Chat"
-        },
-        Storage = sp.GetService<IStorage>()
-    };
+        AI = new(planner),
+        Storage = sp.GetService<IStorage>(),
+        LoggerFactory = loggerFactory,
+        TurnStateFactory = () => new ListState()
+    });
 
-    return new ListBotApplication(applicationOptions);
+    // register turn and activity handlers
+    app.OnConversationUpdate(ConversationUpdateEvents.MembersAdded, ListBotHandlers.OnMembersAddedAsync)
+        .OnMessage("/reset", ListBotHandlers.OnResetMessageAsync);
+    return app;
 });
-#endregion
-
-#region Use Azure OpenAI
-/**
-if (config.Azure == null
-    || string.IsNullOrEmpty(config.Azure.OpenAIApiKey)
-    || string.IsNullOrEmpty(config.Azure.OpenAIEndpoint))
-{
-    throw new Exception("Missing Azure configuration.");
-}
-
-builder.Services.AddSingleton(_ => new AzureOpenAIPlannerOptions(config.Azure.OpenAIApiKey, "text-davinci-003", config.Azure.OpenAIEndpoint)
-{
-    LogRequests = true
-});
-
-// Create the Application.
-builder.Services.AddTransient<IBot, ListBotApplication>(sp =>
-{
-    ILoggerFactory loggerFactory = sp.GetService<ILoggerFactory>()!;
-
-    PromptManager<ListState> promptManager = new("./Prompts");
-
-    AzureOpenAIPlanner<ListState> planner = new(sp.GetService<AzureOpenAIPlannerOptions>()!, loggerFactory.CreateLogger<AzureOpenAIPlanner<ListState>>());
-
-    ApplicationOptions<ListState, ListStateManager> applicationOptions = new()
-    {
-        AI = new AIOptions<ListState>(planner, promptManager)
-        {
-            Prompt = "Chat"
-        },
-        Storage = sp.GetService<IStorage>()
-    };
-
-    return new ListBotApplication(applicationOptions);
-});
-**/
-#endregion
 
 var app = builder.Build();
 

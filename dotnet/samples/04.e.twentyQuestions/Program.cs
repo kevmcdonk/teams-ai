@@ -1,11 +1,11 @@
 ﻿using Microsoft.Bot.Builder;
 using Microsoft.Bot.Builder.Integration.AspNet.Core;
 using Microsoft.Bot.Connector.Authentication;
-using Microsoft.TeamsAI;
-using Microsoft.TeamsAI.AI;
-using Microsoft.TeamsAI.AI.Moderator;
-using Microsoft.TeamsAI.AI.Planner;
-using Microsoft.TeamsAI.AI.Prompt;
+using Microsoft.Bot.Schema;
+using Microsoft.Teams.AI;
+using Microsoft.Teams.AI.AI.Models;
+using Microsoft.Teams.AI.AI.Planners;
+using Microsoft.Teams.AI.AI.Prompts;
 using TwentyQuestions;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -33,14 +33,35 @@ builder.Services.AddSingleton<BotAdapter>(sp => sp.GetService<CloudAdapter>()!);
 // Create singleton instances for bot application
 builder.Services.AddSingleton<IStorage, MemoryStorage>();
 
-#region Use OpenAI
-// Use OpenAI
-if (config.OpenAI == null || string.IsNullOrEmpty(config.OpenAI.ApiKey))
+// Create AI Model
+if (!string.IsNullOrEmpty(config.OpenAI?.ApiKey))
 {
-    throw new Exception("Missing OpenAI configuration.");
+    builder.Services.AddSingleton<OpenAIModel>(sp => new(
+        new OpenAIModelOptions(config.OpenAI.ApiKey, "gpt-3.5-turbo")
+        {
+            LogRequests = true
+        },
+        sp.GetService<ILoggerFactory>()
+    ));
 }
-builder.Services.AddSingleton<OpenAIPlannerOptions>(_ => new(config.OpenAI.ApiKey, "text-davinci-003"));
-builder.Services.AddSingleton<OpenAIModeratorOptions>(_ => new(config.OpenAI.ApiKey, ModerationType.Both));
+else if (!string.IsNullOrEmpty(config.Azure?.OpenAIApiKey) && !string.IsNullOrEmpty(config.Azure.OpenAIEndpoint))
+{
+    builder.Services.AddSingleton<OpenAIModel>(sp => new(
+        new AzureOpenAIModelOptions(
+            config.Azure.OpenAIApiKey,
+            "gpt-35-turbo",
+            config.Azure.OpenAIEndpoint
+        )
+        {
+            LogRequests = true
+        },
+        sp.GetService<ILoggerFactory>()
+    ));
+}
+else
+{
+    throw new Exception("please configure settings for either OpenAI or Azure");
+}
 
 // Create the bot as a transient. In this case the ASP Controller is expecting an IBot.
 builder.Services.AddTransient<IBot>(sp =>
@@ -48,89 +69,49 @@ builder.Services.AddTransient<IBot>(sp =>
     // Create loggers
     ILoggerFactory loggerFactory = sp.GetService<ILoggerFactory>()!;
 
-    // Get HttpClient
-    HttpClient moderatorHttpClient = sp.GetService<IHttpClientFactory>()!.CreateClient("WebClient");
+    // Create Prompt Manager
+    PromptManager prompts = new(new()
+    {
+        PromptFolder = "./Prompts"
+    });
 
-    // Create OpenAIPlanner
-    IPlanner<GameState> planner = new OpenAIPlanner<GameState>(
-        sp.GetService<OpenAIPlannerOptions>()!,
-        loggerFactory.CreateLogger<OpenAIPlanner<GameState>>());
+    // Create ActionPlanner
+    ActionPlanner<GameState> planner = new(
+        options: new(
+            model: sp.GetService<OpenAIModel>()!,
+            prompts: prompts,
+            defaultPrompt: async (context, state, planner) =>
+            {
+                PromptTemplate template = prompts.GetPrompt("sequence");
+                return await Task.FromResult(template);
+            }
+        )
+        { LogRepairs = true },
+        loggerFactory: loggerFactory
+    );
 
-    // Create OpenAIModerator
-    IModerator<GameState> moderator = new OpenAIModerator<GameState>(
-        sp.GetService<OpenAIModeratorOptions>()!,
-        loggerFactory.CreateLogger<OpenAIModerator<GameState>>(),
-        moderatorHttpClient);
+    var applicationBuilder = new ApplicationBuilder<GameState>()
+    .WithAIOptions(new(planner))
+    .WithLoggerFactory(loggerFactory)
+    .WithTurnStateFactory(() => new GameState());
+
+    // Set storage options
+    IStorage? storage = sp.GetService<IStorage>();
+    if (storage != null)
+    {
+        applicationBuilder.WithStorage(storage);
+    }
 
     // Create Application
-    AIHistoryOptions aiHistoryOptions = new()
-    {
-        AssistantHistoryType = AssistantHistoryType.Text
-    };
-    AIOptions<GameState> aiOptions = new(
-        planner: planner,
-        promptManager: new PromptManager<GameState>("./Prompts"),
-        moderator: moderator,
-        prompt: "Chat",
-        history: aiHistoryOptions);
-    ApplicationOptions<GameState, GameStateManager> ApplicationOptions = new()
-    {
-        TurnStateManager = new GameStateManager(),
-        Storage = sp.GetService<IStorage>(),
-        AI = aiOptions,
-    };
-    return new GameBot(ApplicationOptions);
+    Application<GameState> app = applicationBuilder.Build();
+
+    GameBotHandlers handlers = new(planner);
+
+    // register turn and activity handlers
+    app.OnActivity(ActivityTypes.Message, handlers.OnMessageActivityAsync);
+
+    return app;
 });
-#endregion
-
-#region Use Azure OpenAI and Azure Content Safety
-/** // Following code is for using Azure OpenAI and Azure Content Safety
-if (config.Azure == null
-    || string.IsNullOrEmpty(config.Azure.OpenAIApiKey) 
-    || string.IsNullOrEmpty(config.Azure.OpenAIEndpoint)
-    || string.IsNullOrEmpty(config.Azure.ContentSafetyApiKey)
-    || string.IsNullOrEmpty(config.Azure.ContentSafetyEndpoint))
-{
-    throw new Exception("Missing Azure configuration.");
-}
-builder.Services.AddSingleton<AzureOpenAIPlannerOptions>(_ => new(config.Azure.OpenAIApiKey, "text-davinci-003", config.Azure.OpenAIEndpoint));
-builder.Services.AddSingleton<AzureContentSafetyModeratorOptions>(_ => new(config.Azure.ContentSafetyApiKey, config.Azure.ContentSafetyEndpoint, ModerationType.Both));
-
-// Create the bot as a transient. In this case the ASP Controller is expecting an IBot.
-builder.Services.AddTransient<IBot>(sp =>
-{
-    // Create loggers
-    ILoggerFactory loggerFactory = sp.GetService<ILoggerFactory>()!;
-
-    // Create AzureOpenAIPlanner
-    IPlanner<GameState> planner = new AzureOpenAIPlanner<GameState>(
-        sp.GetService<AzureOpenAIPlannerOptions>()!,
-        loggerFactory.CreateLogger<AzureOpenAIPlanner<GameState>>());
-
-    // Create AzureContentSafetyModerator
-    IModerator<GameState> moderator = new AzureContentSafetyModerator<GameState>(sp.GetService<AzureContentSafetyModeratorOptions>()!);
-
-    // Create Application
-    AIHistoryOptions aiHistoryOptions = new()
-    {
-        AssistantHistoryType = AssistantHistoryType.Text
-    };
-    AIOptions<GameState> aiOptions = new(
-        planner: planner,
-        promptManager: new PromptManager<GameState>("./Prompts"),
-        moderator: moderator,
-        prompt: "Chat",
-        history: aiHistoryOptions);
-    ApplicationOptions<GameState, GameStateManager> ApplicationOptions = new()
-    {
-        TurnStateManager = new GameStateManager(),
-        Storage = sp.GetService<IStorage>(),
-        AI = aiOptions,
-    };
-    return new GameBot(ApplicationOptions);
-});
-**/
-#endregion
 
 var app = builder.Build();
 

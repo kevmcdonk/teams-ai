@@ -1,6 +1,6 @@
-﻿using Microsoft.TeamsAI.AI.Planner;
+﻿using Microsoft.Teams.AI.AI.Planners;
 
-namespace Microsoft.TeamsAI.Tests.AITests
+namespace Microsoft.Teams.AI.Tests.AITests
 {
     public class PlanTests
     {
@@ -42,7 +42,8 @@ namespace Microsoft.TeamsAI.Tests.AITests
     },
     {
       ""type"": ""DO"",
-      ""entities"": {
+      ""action"": ""DoSomething"",
+      ""parameters"": {
         ""prop"": ""value""
       }
     }

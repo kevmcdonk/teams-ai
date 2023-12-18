@@ -1,5 +1,5 @@
 ﻿
-namespace Microsoft.TeamsAI.State
+namespace Microsoft.Teams.AI.State
 {
     /// <summary>
     /// Temporary state.
@@ -7,7 +7,7 @@ namespace Microsoft.TeamsAI.State
     /// <remarks>
     /// Inherit a new class from this base abstract class to strongly type the applications temp state.
     /// </remarks>
-    public class TempState : StateBase
+    public class TempState : Record
     {
         /// <summary>
         /// Name of the input property.
@@ -20,9 +20,20 @@ namespace Microsoft.TeamsAI.State
         public const string OutputKey = "output";
 
         /// <summary>
-        /// Name of the history property.
+        /// Name of the action outputs property.
         /// </summary>
-        public const string HistoryKey = "history";
+        public const string ActionOutputsKey = "actionOutputs";
+
+        /// <summary>
+        /// Name of the auth tokens property.
+        /// </summary>
+        public const string AuthTokenKey = "authTokens";
+
+
+        /// <summary>
+        /// Name of the duplicate token exchange property
+        /// </summary>
+        public const string DuplicateTokenExchangeKey = "duplicateTokenExchange";
 
         /// <summary>
         /// Creates a new instance of the <see cref="TempState"/> class.
@@ -31,11 +42,13 @@ namespace Microsoft.TeamsAI.State
         {
             this[InputKey] = string.Empty;
             this[OutputKey] = string.Empty;
-            this[HistoryKey] = string.Empty;
+            this[ActionOutputsKey] = new Dictionary<string, string>();
+            this[AuthTokenKey] = new Dictionary<string, string>();
+            this[DuplicateTokenExchangeKey] = false;
         }
 
         /// <summary>
-        /// Input pass to an AI prompt
+        /// Input passed to an AI prompt
         /// </summary>
         public string Input
         {
@@ -43,8 +56,9 @@ namespace Microsoft.TeamsAI.State
             set => Set(InputKey, value);
         }
 
+        // TODO: This is currently not used, should store AI prompt/function output here
         /// <summary>
-        /// Formatted conversation history for embedding in an AI prompt
+        /// Output returned from an AI prompt or function
         /// </summary>
         public string Output
         {
@@ -53,12 +67,30 @@ namespace Microsoft.TeamsAI.State
         }
 
         /// <summary>
-        /// Output returned from an AI prompt or function
+        /// All outputs returned from the action sequence that was executed.
         /// </summary>
-        public string History
+        public Dictionary<string, string> ActionOutputs
         {
-            get => Get<string>(HistoryKey)!;
-            set => Set(HistoryKey, value);
+            get => Get<Dictionary<string, string>>(ActionOutputsKey)!;
+            set => Set(ActionOutputsKey, value);
+        }
+
+        /// <summary>
+        /// All tokens acquired after sign-in for current activity
+        /// </summary>
+        public Dictionary<string, string> AuthTokens
+        {
+            get => Get<Dictionary<string, string>>(AuthTokenKey)!;
+            set => Set(AuthTokenKey, value);
+        }
+
+        /// <summary>
+        /// Whether current token exchange is a duplicate one
+        /// </summary>
+        public bool DuplicateTokenExchange
+        {
+            get => Get<bool>(DuplicateTokenExchangeKey)!;
+            set => Set(DuplicateTokenExchangeKey, value);
         }
     }
 }

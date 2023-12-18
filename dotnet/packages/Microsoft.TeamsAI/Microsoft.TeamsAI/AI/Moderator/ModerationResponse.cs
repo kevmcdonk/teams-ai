@@ -1,6 +1,6 @@
 ﻿using System.Text.Json.Serialization;
 
-namespace Microsoft.TeamsAI.AI.Moderator
+namespace Microsoft.Teams.AI.AI.Moderator
 {
     /// <summary>
     /// The result from the OpenAI's moderation API call.
@@ -32,7 +32,7 @@ namespace Microsoft.TeamsAI.AI.Moderator
     public class ModerationResult
     {
         /// <summary>
-        /// The OpenAI categories and whether they were flaggged or not.
+        /// The OpenAI categories and whether they were flagged or not.
         /// </summary>
         [JsonPropertyName("categories")]
         public ModerationCategoriesFlagged? CategoriesFlagged { get; set; }

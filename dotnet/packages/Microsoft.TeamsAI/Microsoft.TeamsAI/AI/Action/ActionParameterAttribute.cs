@@ -1,4 +1,4 @@
-﻿namespace Microsoft.TeamsAI.AI.Action
+﻿namespace Microsoft.Teams.AI.AI.Action
 {
     /// <summary>
     /// Attribute that marks a method parameter as an action parameter.
@@ -32,7 +32,7 @@
         /// <summary>
         /// The action parameter is data object
         /// </summary>
-        Entities,
+        Parameters,
         /// <summary>
         /// The action parameter is action name
         /// </summary>
