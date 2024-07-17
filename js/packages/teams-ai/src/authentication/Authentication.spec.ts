@@ -63,7 +63,8 @@ describe('Authentication', () => {
     };
 
     beforeEach(() => {
-        app = new Application({ adapter });
+        app = new Application();
+        sinon.stub(app, 'adapter').get(() => adapter);
         appStub = sinon.stub(app);
         settings = {
             title: 'test',
@@ -95,7 +96,7 @@ describe('Authentication', () => {
                 auth: {
                     clientId: 'id',
                     clientSecret: 'secret',
-                    authority: 'authority',
+                    authority: 'authority'
                 }
             }
         } as TeamsSsoSettings;
@@ -439,7 +440,8 @@ describe('AuthenticationManager', () => {
     };
 
     beforeEach(() => {
-        app = new Application({ adapter });
+        app = new Application();
+        sinon.stub(app, 'adapter').get(() => adapter);
         appStub = sinon.stub(app);
     });
 

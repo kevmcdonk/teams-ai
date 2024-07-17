@@ -6,18 +6,21 @@
  * Licensed under the MIT License.
  */
 
-import { Planner, Plan } from './Planner';
-import { TurnState } from '../TurnState';
 import { TurnContext } from 'botbuilder';
+
 import { AI } from '../AI';
-import { PromptTemplate, PromptManager } from '../prompts';
-import { PromptCompletionModel, PromptResponse } from '../models';
-import { PromptResponseValidator } from '../validators';
-import { Memory } from '../MemoryFork';
-import { LLMClient } from './LLMClient';
-import { Tokenizer } from '../tokenizers';
-import { Utilities } from '../Utilities';
 import { DefaultAugmentation } from '../augmentations';
+import { Memory } from '../MemoryFork';
+import { PromptCompletionModel } from '../models';
+import { PromptTemplate, PromptManager } from '../prompts';
+import { Tokenizer } from '../tokenizers';
+import { TurnState } from '../TurnState';
+import { Utilities } from '../Utilities';
+import { PromptResponse } from '../types';
+import { PromptResponseValidator } from '../validators';
+
+import { LLMClient } from './LLMClient';
+import { Planner, Plan } from './Planner';
 
 /**
  * Factory function used to create a prompt template.
@@ -27,7 +30,11 @@ import { DefaultAugmentation } from '../augmentations';
  * @param planner The action planner that is generating the prompt.
  * @returns A promise that resolves to the prompt template to use.
  */
-export type ActionPlannerPromptFactory<TState extends TurnState = TurnState> = (context: TurnContext, state: TState, planner: ActionPlanner<TState>) => Promise<PromptTemplate>;
+export type ActionPlannerPromptFactory<TState extends TurnState = TurnState> = (
+    context: TurnContext,
+    state: TState,
+    planner: ActionPlanner<TState>
+) => Promise<PromptTemplate>;
 
 /**
  * Options used to configure an `ActionPlanner` instance.
@@ -49,7 +56,7 @@ export interface ActionPlannerOptions<TState extends TurnState = TurnState> {
      * @remarks
      * This can either be the name of a prompt template or a function that returns a prompt template.
      */
-    defaultPrompt: string|ActionPlannerPromptFactory<TState>;
+    defaultPrompt: string | ActionPlannerPromptFactory<TState>;
 
     /**
      * Maximum number of repair attempts to make.
@@ -63,7 +70,7 @@ export interface ActionPlannerOptions<TState extends TurnState = TurnState> {
     /**
      * Optional tokenizer to use.
      * @remarks
-     * If not specified, a new `GPT3Tokenizer` instance will be created.
+     * If not specified, a new `GPTTokenizer` instance will be created.
      */
     tokenizer?: Tokenizer;
 
@@ -73,6 +80,11 @@ export interface ActionPlannerOptions<TState extends TurnState = TurnState> {
      * The default value is false.
      */
     logRepairs?: boolean;
+
+    /**
+     * Optional message to send a client at the start of a streaming response.
+     */
+    startStreamingMessage?: string;
 }
 
 /**
@@ -102,13 +114,16 @@ export class ActionPlanner<TState extends TurnState = TurnState> implements Plan
 
     /**
      * Creates a new `ActionPlanner` instance.
-     * @param options Options used to configure the planner.
+     * @param {ActionPlannerOptions<TState>} options Options used to configure the planner.
      */
     public constructor(options: ActionPlannerOptions<TState>) {
-        this._options = Object.assign({
-            max_repair_attempts: 3,
-            logRepairs: false
-        }, options);
+        this._options = Object.assign(
+            {
+                max_repair_attempts: 3,
+                logRepairs: false
+            },
+            options
+        );
         if (typeof this._options.defaultPrompt == 'function') {
             this._promptFactory = this._options.defaultPrompt;
         } else {
@@ -125,7 +140,7 @@ export class ActionPlanner<TState extends TurnState = TurnState> implements Plan
         return this._options.prompts;
     }
 
-    public get defaultPrompt(): string|undefined {
+    public get defaultPrompt(): string | undefined {
         return this._defaultPrompt;
     }
 
@@ -137,16 +152,12 @@ export class ActionPlanner<TState extends TurnState = TurnState> implements Plan
      * there is no work to be performed.
      *
      * The planner should take the users input from `state.temp.input`.
-     * @param context Context for the current turn of conversation.
-     * @param state Application state for the current turn of conversation.
-     * @param ai The AI system that is generating the plan.
-     * @returns The plan that was generated.
+     * @param {TurnContext} context Context for the current turn of conversation.
+     * @param {TState} state Application state for the current turn of conversation.
+     * @param {AI<TState>} ai The AI system that is generating the plan.
+     * @returns {Promise<Plan>} The plan that was generated.
      */
-    public async beginTask(
-        context: TurnContext,
-        state: TState,
-        ai: AI<TState>
-    ): Promise<Plan> {
+    public async beginTask(context: TurnContext, state: TState, ai: AI<TState>): Promise<Plan> {
         return await this.continueTask(context, state, ai);
     }
 
@@ -159,16 +170,12 @@ export class ActionPlanner<TState extends TurnState = TurnState> implements Plan
      * to be performed.
      *
      * The output from the last plan step that was executed is passed to the planner via `state.temp.input`.
-     * @param context Context for the current turn of conversation.
-     * @param state Application state for the current turn of conversation.
-     * @param ai The AI system that is generating the plan.
-     * @returns The plan that was generated.
+     * @param {TurnContext} context - Context for the current turn of conversation.
+     * @param {TState} state - Application state for the current turn of conversation.
+     * @param {AI<TState>} ai - The AI system that is generating the plan.
+     * @returns {Promise<Plan>} The plan that was generated.
      */
-    public async continueTask(
-        context: TurnContext,
-        state: TState,
-        ai: AI<TState>
-    ): Promise<Plan> {
+    public async continueTask(context: TurnContext, state: TState, ai: AI<TState>): Promise<Plan> {
         // Identify the prompt to use
         const template = await this._promptFactory(context, state, this);
 
@@ -181,8 +188,15 @@ export class ActionPlanner<TState extends TurnState = TurnState> implements Plan
             throw result.error!;
         }
 
-        // Return plan
-        return await augmentation.createPlanFromResponse(context, state, result);
+        // Check to see if we have a response
+        // - when a streaming response is used the response message will be undefined.
+        if (result.message) {
+            // Return plan
+            return await augmentation.createPlanFromResponse(context, state, result);
+        } else {
+            // Return an empty plan
+            return { type: 'plan', commands: [] };
+        }
     }
 
     /**
@@ -196,12 +210,18 @@ export class ActionPlanner<TState extends TurnState = TurnState> implements Plan
      * a message containing a JSON object. If no validator is used, the response will be a
      * message containing the response text as a string.
      * @template TContent Optional. Type of message content returned for a 'success' response. The `response.message.content` field will be of type TContent. Defaults to `string`.     * @param context Context for the current turn of conversation.
-     * @param memory A memory interface used to access state variables (the turn state object implements this interface.)
-     * @param prompt Name of the prompt to use or a prompt template.
-     * @param validator Optional. A validator to use to validate the response returned by the model.
-     * @returns The result of the LLM call.
+     * @param {TurnContext} context - Context for the current turn of conversation.
+     * @param {Memory} memory A memory interface used to access state variables (the turn state object implements this interface.)
+     * @param {string | PromptTemplate} prompt - Name of the prompt to use or a prompt template.
+     * @param {PromptResponseValidator<TContent>} validator - Optional. A validator to use to validate the response returned by the model.
+     * @returns {Promise<PromptResponse<TContent>>} The result of the LLM call.
      */
-    public async completePrompt<TContent = string>(context: TurnContext, memory: Memory, prompt: string|PromptTemplate, validator?: PromptResponseValidator<TContent>): Promise<PromptResponse<TContent>> {
+    public async completePrompt<TContent = string>(
+        context: TurnContext,
+        memory: Memory,
+        prompt: string | PromptTemplate,
+        validator?: PromptResponseValidator<TContent>
+    ): Promise<PromptResponse<TContent>> {
         // Cache prompt template if being dynamically assigned
         let name = '';
         if (typeof prompt == 'object') {
@@ -239,6 +259,7 @@ export class ActionPlanner<TState extends TurnState = TurnState> implements Plan
             max_history_messages: this.prompts.options.max_history_messages,
             max_repair_attempts: this._options.max_repair_attempts,
             logRepairs: this._options.logRepairs,
+            startStreamingMessage: this._options.startStreamingMessage
         });
 
         // Complete prompt
@@ -247,9 +268,8 @@ export class ActionPlanner<TState extends TurnState = TurnState> implements Plan
 
     /**
      * Creates a semantic function that can be registered with the apps prompt manager.
-     * @param {string} name The name of the semantic function.
-     * @param {PromptTemplate} template The prompt template to use.
-     * @param {Partial<AIOptions<TState>>} options Optional. Override options for the prompt. If omitted, the AI systems configured options will be used.
+     * @param {string | PromptTemplate} prompt - The name of the prompt to use.
+     * @param {PromptResponseValidator<any>} validator - Optional. A validator to use to validate the response returned by the model.
      * @remarks
      * Semantic functions are functions that make model calls and return their results as template
      * parameters to other prompts. For example, you could define a semantic function called
@@ -263,10 +283,7 @@ export class ActionPlanner<TState extends TurnState = TurnState> implements Plan
      * your main prompt you can call it using the template expression `{{translator}}`.
      * @returns {Promise<any>} A promise that resolves to the result of the semantic function.
      */
-    public addSemanticFunction(
-        prompt: string|PromptTemplate,
-        validator?: PromptResponseValidator<any>,
-    ): this {
+    public addSemanticFunction(prompt: string | PromptTemplate, validator?: PromptResponseValidator<any>): this {
         // Cache prompt template if being dynamically assigned
         let name = '';
         if (typeof prompt == 'object') {

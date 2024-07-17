@@ -6,13 +6,13 @@
  * Licensed under the MIT License.
  */
 
-const colorizer = require('json-colorizer');
+import colorizer from 'json-colorizer';
 
 /**
  * @private
  */
 export class Colorize {
-    public static error(error: Error|string): string {
+    public static error(error: Error | string): string {
         if (typeof error === 'string') {
             return `\x1b[31;1m${error}\x1b[0m`;
         } else {
@@ -24,7 +24,7 @@ export class Colorize {
         if (typeof output === 'string') {
             return `\x1b[32m${quote}${output}${quote}\x1b[0m`;
         } else if (typeof output === 'object' && output !== null) {
-            return colorizer(output, {
+            return colorizer(JSON.stringify(output), {
                 pretty: true,
                 colors: {
                     BRACE: 'white',
@@ -59,6 +59,5 @@ export class Colorize {
 
     public static warning(warning: string): string {
         return `\x1b[33m${warning}\x1b[0m`;
-
     }
 }

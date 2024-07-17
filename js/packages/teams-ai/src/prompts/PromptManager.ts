@@ -6,31 +6,33 @@
  * Licensed under the MIT License.
  */
 
-import { PromptFunctions, PromptFunction } from "./PromptFunctions";
-import { PromptTemplate } from "./PromptTemplate";
-import { Tokenizer } from "../tokenizers";
-import { TurnContext } from "botbuilder";
+import { TurnContext } from 'botbuilder';
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { TemplateSection } from "./TemplateSection";
-import { CompletionConfig } from "./PromptTemplate";
-import { DataSource } from "../dataSources";
-import { PromptSection } from "./PromptSection";
-import { Memory } from "../MemoryFork";
-import { DataSourceSection } from "./DataSourceSection";
-import { MonologueAugmentation, SequenceAugmentation } from "../augmentations";
-import { ConversationHistory } from "./ConversationHistory";
-import { UserMessage } from "./UserMessage";
-import { GroupSection } from "./GroupSection";
-import { Prompt } from "./Prompt";
-import { UserInputMessage } from "./UserInputMessage";
+
+import { MonologueAugmentation, SequenceAugmentation } from '../augmentations';
+import { DataSource } from '../dataSources';
+import { Memory } from '../MemoryFork';
+import { Tokenizer } from '../tokenizers';
+import { CompletionConfig } from '../types';
+
+import { ConversationHistory } from './ConversationHistory';
+import { PromptTemplate } from './PromptTemplate';
+import { DataSourceSection } from './DataSourceSection';
+import { GroupSection } from './GroupSection';
+import { Prompt } from './Prompt';
+import { PromptFunctions, PromptFunction } from './PromptFunctions';
+import { PromptSection } from './PromptSection';
+import { TemplateSection } from './TemplateSection';
+import { UserInputMessage } from './UserInputMessage';
+import { UserMessage } from './UserMessage';
 
 /**
  * Options used to configure the prompt manager.
  */
 export interface PromptManagerOptions {
     /**
-     * Path to the filesystem folder containing all the applications prompts.
+     * Path to the filesystem folder containing all the application's prompts.
      */
     promptsFolder: string;
 
@@ -42,10 +44,10 @@ export interface PromptManagerOptions {
     role?: string;
 
     /**
-     * Optional. Maximum number of tokens to of conversation history to include in prompts.
+     * Optional. Maximum number of tokens of conversation history to include in prompts.
      * @remarks
      * The default is to let conversation history consume the remainder of the prompts
-     * `max_input_tokens` budget. Setting this a value greater then 1 will override that and
+     * `max_input_tokens` budget. Setting this to a value greater than 1 will override that and
      * all prompts will use a fixed token budget.
      */
     max_conversation_history_tokens?: number;
@@ -62,7 +64,7 @@ export interface PromptManagerOptions {
     /**
      * Optional. Maximum number of tokens user input to include in prompts.
      * @remarks
-     * This defaults to unlimited but can set to a value greater then `1` to limit the length of
+     * This defaults to unlimited but can be set to a value greater than `1` to limit the length of
      * user input included in prompts. For example, if set to `100` then the any user input over
      * 100 tokens in length will be truncated.
      */
@@ -84,7 +86,7 @@ export interface ConfiguredPromptManagerOptions {
     role: string;
 
     /**
-     * Maximum number of tokens to of conversation history to include in prompts.
+     * Maximum number of tokens of conversation history to include in prompts.
      */
     max_conversation_history_tokens: number;
 
@@ -94,7 +96,7 @@ export interface ConfiguredPromptManagerOptions {
     max_history_messages: number;
 
     /**
-     * Maximum number of tokens user input to include in prompts.
+     * Maximum number of tokens of user input to include in prompts.
      */
     max_input_tokens: number;
 }
@@ -123,19 +125,24 @@ export class PromptManager implements PromptFunctions {
 
     /**
      * Creates a new 'PromptManager' instance.
-     * @param options Options used to configure the prompt manager.
+     * @param {PromptManagerOptions} options - Options used to configure the prompt manager.
+     * @returns {PromptManager} A new prompt manager instance.
      */
     public constructor(options: PromptManagerOptions) {
-        this._options = Object.assign({
-            role: 'system',
-            max_conversation_history_tokens: 1.0,
-            max_history_messages: 10,
-            max_input_tokens: -1
-        }, options as ConfiguredPromptManagerOptions);
+        this._options = Object.assign(
+            {
+                role: 'system',
+                max_conversation_history_tokens: 1.0,
+                max_history_messages: 10,
+                max_input_tokens: -1
+            },
+            options as ConfiguredPromptManagerOptions
+        );
     }
 
     /**
      * Gets the configured prompt manager options.
+     * @returns {ConfiguredPromptManagerOptions} The configured prompt manager options.
      */
     public get options(): ConfiguredPromptManagerOptions {
         return this._options;
@@ -143,8 +150,8 @@ export class PromptManager implements PromptFunctions {
 
     /**
      * Registers a new data source with the prompt manager.
-     * @param dataSource Data source to add.
-     * @returns The prompt manager for chaining.
+     * @param {DataSource} dataSource - Data source to add.
+     * @returns {this} The prompt manager for chaining.
      */
     public addDataSource(dataSource: DataSource): this {
         if (this._dataSources.has(dataSource.name)) {
@@ -158,8 +165,8 @@ export class PromptManager implements PromptFunctions {
 
     /**
      * Looks up a data source by name.
-     * @param name Name of the data source to lookup.
-     * @returns The data source.
+     * @param {string} name - Name of the data source to lookup.
+     * @returns {DataSource} The data source.
      */
     public getDataSource(name: string): DataSource {
         const dataSource = this._dataSources.get(name);
@@ -172,8 +179,8 @@ export class PromptManager implements PromptFunctions {
 
     /**
      * Checks for the existence of a named data source.
-     * @param name Name of the data source to lookup.
-     * @returns True if the data source exists.
+     * @param {string} name - Name of the data source to lookup.
+     * @returns {boolean} True if the data source exists.
      */
     public hasDataSource(name: string): boolean {
         return this._dataSources.has(name);
@@ -181,9 +188,9 @@ export class PromptManager implements PromptFunctions {
 
     /**
      * Registers a new prompt template function with the prompt manager.
-     * @param name Name of the function to add.
-     * @param fn Function to add.
-     * @returns The prompt manager for chaining.
+     * @param {string} name - Name of the function to add.
+     * @param {PromptFunction} fn - Function to add.
+     * @returns {this} - The prompt manager for chaining.
      */
     public addFunction(name: string, fn: PromptFunction): this {
         if (this._functions.has(name)) {
@@ -197,8 +204,8 @@ export class PromptManager implements PromptFunctions {
 
     /**
      * Looks up a prompt template function by name.
-     * @param name Name of the function to lookup.
-     * @returns The function.
+     * @param {string} name - Name of the function to lookup.
+     * @returns {PromptFunction} The function.
      */
     public getFunction(name: string): PromptFunction {
         const fn = this._functions.get(name);
@@ -211,8 +218,8 @@ export class PromptManager implements PromptFunctions {
 
     /**
      * Checks for the existence of a named prompt template function.
-     * @param name Name of the function to lookup.
-     * @returns True if the function exists.
+     * @param {string} name Name of the function to lookup.
+     * @returns {boolean} True if the function exists.
      */
     public hasFunction(name: string): boolean {
         return this._functions.has(name);
@@ -220,27 +227,33 @@ export class PromptManager implements PromptFunctions {
 
     /**
      * Invokes a prompt template function by name.
-     * @param name Name of the function to invoke.
-     * @param context Turn context for the current turn of conversation with the user.
-     * @param memory An interface for accessing state values.
-     * @param tokenizer Tokenizer to use when rendering the prompt.
-     * @param args Arguments to pass to the function.
-     * @returns Value returned by the function.
+     * @param {string} name - Name of the function to invoke.
+     * @param {TurnContext} context - Turn context for the current turn of conversation with the user.
+     * @param {Memory} memory - An interface for accessing state values.
+     * @param {Tokenizer} tokenizer - Tokenizer to use when rendering the prompt.
+     * @param {string[]} args - Arguments to pass to the function.
+     * @returns {Promise<any>} Value returned by the function.
      */
-    public invokeFunction(name: string, context: TurnContext, memory: Memory, tokenizer: Tokenizer, args: string[]): Promise<any> {
+    public invokeFunction(
+        name: string,
+        context: TurnContext,
+        memory: Memory,
+        tokenizer: Tokenizer,
+        args: string[]
+    ): Promise<any> {
         const fn = this.getFunction(name);
         return fn(context, memory as any, this as any, tokenizer, args);
     }
 
     /**
      * Registers a new prompt template with the prompt manager.
-     * @param prompt Prompt template to add.
-     * @returns The prompt manager for chaining.
+     * @param {PromptTemplate} prompt - Prompt template to add.
+     * @returns {this} The prompt manager for chaining.
      */
     public addPrompt(prompt: PromptTemplate): this {
         if (this._prompts.has(prompt.name)) {
             throw new Error(
-                `The PromptManager.addPrompt() method was called with a previously registered prompt named "${name}".`
+                `The PromptManager.addPrompt() method was called with a previously registered prompt named "${prompt.name}".`
             );
         }
 
@@ -257,8 +270,8 @@ export class PromptManager implements PromptFunctions {
      * The template will be pre-parsed and cached for use when the template is rendered by name.
      *
      * Any augmentations will also be added to the template.
-     * @param name Name of the prompt to load.
-     * @returns The loaded and parsed prompt template.
+     * @param {string} name - Name of the prompt to load.
+     * @returns {Promise<PromptTemplate>} The loaded and parsed prompt template.
      */
     public async getPrompt(name: string): Promise<PromptTemplate> {
         if (!this._prompts.has(name)) {
@@ -272,7 +285,6 @@ export class PromptManager implements PromptFunctions {
 
             // Load prompt config
             try {
-                // eslint-disable-next-line security/detect-non-literal-fs-filename
                 const config = await fs.readFile(configFile, 'utf-8');
                 template.config = JSON.parse(config);
             } catch (err: unknown) {
@@ -284,7 +296,6 @@ export class PromptManager implements PromptFunctions {
             // Load prompt text
             let sections: PromptSection[] = [];
             try {
-                // eslint-disable-next-line security/detect-non-literal-fs-filename
                 const role = this._options.role || 'system';
                 const prompt = await fs.readFile(promptFile, 'utf-8');
                 sections.push(new TemplateSection(prompt, role));
@@ -296,7 +307,6 @@ export class PromptManager implements PromptFunctions {
 
             // Load optional actions
             try {
-                // eslint-disable-next-line security/detect-non-literal-fs-filename
                 const actions = await fs.readFile(actionsFile, 'utf-8');
                 template.actions = JSON.parse(actions);
             } catch (err: unknown) {
@@ -316,7 +326,12 @@ export class PromptManager implements PromptFunctions {
             // - The ConversationHistory section will use the remaining tokens from
             //   max_input_tokens.
             if (template.config.completion.include_history) {
-                sections.push(new ConversationHistory(`conversation.${template.name}_history`, this.options.max_conversation_history_tokens));
+                sections.push(
+                    new ConversationHistory(
+                        `conversation.${template.name}_history`,
+                        this.options.max_conversation_history_tokens
+                    )
+                );
             }
 
             // Include user input
@@ -338,8 +353,8 @@ export class PromptManager implements PromptFunctions {
 
     /**
      * Checks for the existence of a named prompt.
-     * @param name Name of the prompt to load.
-     * @returns True if the prompt exists.
+     * @param {string} name - Name of the prompt to load.
+     * @returns {boolean} True if the prompt exists.
      */
     public async hasPrompt(name: string): Promise<boolean> {
         if (!this._prompts.has(name)) {
@@ -348,7 +363,6 @@ export class PromptManager implements PromptFunctions {
 
             // Check for prompt existence
             try {
-                // eslint-disable-next-line security/detect-non-literal-fs-filename
                 await fs.access(promptFile);
             } catch (err: unknown) {
                 return false;
@@ -359,21 +373,28 @@ export class PromptManager implements PromptFunctions {
     }
 
     /**
+     * @param {PromptTemplate} template - The prompt template to update.
      * @private
      */
     private updateConfig(template: PromptTemplate): void {
         // Set config defaults
-        template.config.completion = Object.assign({
-            frequency_penalty: 0.0,
-            include_history: true,
-            include_input: true,
-            include_images: false,
-            max_tokens: 150,
-            max_input_tokens: 2048,
-            presence_penalty: 0.0,
-            temperature: 0.0,
-            top_p: 0.0
-        } as CompletionConfig, template.config.completion);
+        template.config.completion = Object.assign(
+            {
+                frequency_penalty: 0.0,
+                include_history: true,
+                include_input: true,
+                include_images: false,
+                max_tokens: 150,
+                max_input_tokens: 2048,
+                presence_penalty: 0.0,
+                temperature: 0.0,
+                top_p: 0.0,
+                include_tools: false,
+                tool_choice: 'auto',
+                parallel_tool_calls: true
+            } as CompletionConfig,
+            template.config.completion
+        );
 
         // Migrate old schema
         if (template.config.schema === 1) {
@@ -385,6 +406,8 @@ export class PromptManager implements PromptFunctions {
     }
 
     /**
+     * @param {PromptTemplate} template - The prompt template to append augmentations to.
+     * @param {PromptSection[]} sections - The prompt sections to append augmentations to.
      * @private
      */
     private appendAugmentations(template: PromptTemplate, sections: PromptSection[]): void {

@@ -16,7 +16,7 @@ namespace Microsoft.Teams.AI
     {
         private const string SSO_DIALOG_ID = "_TeamsSsoDialog";
         private Regex _tokenExchangeIdRegex;
-        private TeamsSsoPrompt _prompt;
+        protected TeamsSsoPrompt _prompt;
 
         /// <summary>
         /// Initializes the class
@@ -76,7 +76,7 @@ namespace Microsoft.Teams.AI
         /// <param name="context">The turn context</param>
         /// <param name="cancellationToken">The cancellation token</param>
         /// <returns>True if the activity should be handled by current authentication hanlder. Otherwise, false.</returns>
-        protected override async Task<bool> TokenExchangeRouteSelector(ITurnContext context, CancellationToken cancellationToken)
+        internal override async Task<bool> TokenExchangeRouteSelector(ITurnContext context, CancellationToken cancellationToken)
         {
             JObject? value = context.Activity.Value as JObject;
             JToken? id = value?["id"];
@@ -90,6 +90,7 @@ namespace Microsoft.Teams.AI
             TurnStateProperty<DialogState> accessor = new(state, "conversation", dialogStateProperty);
             DialogSet dialogSet = new(accessor);
             WaterfallDialog ssoDialog = new(SSO_DIALOG_ID);
+
             dialogSet.Add(this._prompt);
             dialogSet.Add(new WaterfallDialog(SSO_DIALOG_ID, new WaterfallStep[]
             {
@@ -99,7 +100,7 @@ namespace Microsoft.Teams.AI
                 },
                 async (step, cancellationToken) =>
                 {
-                     TokenResponse? tokenResponse = step.Result as TokenResponse;
+                    TokenResponse? tokenResponse = step.Result as TokenResponse;
                     if (tokenResponse != null && await ShouldDedup(context))
                     {
                         state.Temp.DuplicateTokenExchange = true;

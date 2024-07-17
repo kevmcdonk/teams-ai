@@ -6,13 +6,21 @@
  * Licensed under the MIT License.
  */
 
-import { ConversationHistory, Message, Prompt, PromptFunctions, PromptTemplate } from "../prompts";
-import { PromptResponse, PromptCompletionModel } from "../models";
-import { Validation, PromptResponseValidator, DefaultResponseValidator } from "../validators";
-import { Memory, MemoryFork } from "../MemoryFork";
-import { Colorize } from "../internals";
-import { TurnContext } from "botbuilder";
-import { GPT3Tokenizer, Tokenizer } from "../tokenizers";
+import { TurnContext } from 'botbuilder';
+
+import { Colorize } from '../internals';
+import { Memory, MemoryFork } from '../MemoryFork';
+import {
+    PromptCompletionModel,
+    PromptCompletionModelBeforeCompletionEvent,
+    PromptCompletionModelChunkReceivedEvent,
+    PromptCompletionModelResponseReceivedEvent
+} from '../models';
+import { ConversationHistory, Message, Prompt, PromptFunctions, PromptTemplate } from '../prompts';
+import { StreamingResponse } from '../StreamingResponse';
+import { GPTTokenizer, Tokenizer } from '../tokenizers';
+import { PromptResponse } from '../types';
+import { Validation, PromptResponseValidator, DefaultResponseValidator } from '../validators';
 
 /**
  * Options for an LLMClient instance.
@@ -63,7 +71,7 @@ export interface LLMClientOptions<TContent = any> {
     /**
      * Optional. Tokenizer to use when rendering the prompt or counting tokens.
      * @remarks
-     * If not specified a new instance of `GPT3Tokenizer` will be created.
+     * If not specified, a new instance of `GPTTokenizer` will be created. GPT3Tokenizer can be passed in for gpt-3 models.
      */
     tokenizer?: Tokenizer;
 
@@ -79,6 +87,11 @@ export interface LLMClientOptions<TContent = any> {
      * Optional. If true, any repair attempts will be logged to the console.
      */
     logRepairs?: boolean;
+
+    /**
+     * Optional message to send a client at the start of a streaming response.
+     */
+    startStreamingMessage?: string;
 }
 
 /**
@@ -133,7 +146,6 @@ export interface ConfiguredLLMClientOptions<TContent = any> {
 
 /**
  * LLMClient class that's used to complete prompts.
- *
  * @remarks
  * Each wave, at a minimum needs to be configured with a `client`, `prompt`, and `prompt_options`.
  *
@@ -181,6 +193,8 @@ export interface ConfiguredLLMClientOptions<TContent = any> {
  * @template TContent Optional. Type of message content returned for a 'success' response. The `response.message.content` field will be of type TContent. Defaults to `any`.
  */
 export class LLMClient<TContent = any> {
+    private readonly _startStreamingMessage: string | undefined;
+
     /**
      * Configured options for this LLMClient instance.
      */
@@ -188,16 +202,19 @@ export class LLMClient<TContent = any> {
 
     /**
      * Creates a new `LLMClient` instance.
-     * @param options Options to configure the instance with.
+     * @param {LLMClientOptions<TContent>} options - Options to configure the instance with.
      */
     public constructor(options: LLMClientOptions<TContent>) {
-        this.options = Object.assign({
-            history_variable: 'conversation.history',
-            input_variable: 'temp.input',
-            max_history_messages: 10,
-            max_repair_attempts: 3,
-            logRepairs: false
-        }, options) as ConfiguredLLMClientOptions<TContent>;
+        this.options = Object.assign(
+            {
+                history_variable: 'conversation.history',
+                input_variable: 'temp.input',
+                max_history_messages: 10,
+                max_repair_attempts: 3,
+                logRepairs: false
+            },
+            options
+        ) as ConfiguredLLMClientOptions<TContent>;
 
         // Create validator to use
         if (!this.options.validator) {
@@ -206,21 +223,23 @@ export class LLMClient<TContent = any> {
 
         // Create tokenizer to use
         if (!this.options.tokenizer) {
-            this.options.tokenizer = new GPT3Tokenizer();
+            this.options.tokenizer = new GPTTokenizer();
         }
+
+        this._startStreamingMessage = options.startStreamingMessage;
     }
 
     /**
      * Adds a result from a `function_call` to the history.
-     * @param memory An interface for accessing state values.
-     * @param name Name of the function that was called.
-     * @param results Results returned by the function.
+     * @param {Memory} memory - An interface for accessing state values.
+     * @param {string} name - Name of the function that was called.
+     * @param {any} results - Results returned by the function.
      */
     public addFunctionResultToHistory(memory: Memory, name: string, results: any): void {
         // Convert content to string
         let content = '';
-        if (typeof results === "object") {
-            if (typeof results.toISOString == "function") {
+        if (typeof results === 'object') {
+            if (typeof results.toISOString == 'function') {
                 content = results.toISOString();
             } else {
                 content = JSON.stringify(results);
@@ -268,17 +287,118 @@ export class LLMClient<TContent = any> {
      * the validator feedback message.  There are other status codes for various errors and in all
      * cases except `success` the `response.message` will be of type `string`.
      * @template TContent Optional. Type of message content returned for a 'success' response. The `response.message.content` field will be of type TContent. Defaults to `any`.
-     * @param context Current turn context.
-     * @param memory An interface for accessing state values.
-     * @param functions Functions to use when rendering the prompt.
-     * @returns A `PromptResponse` with the status and message.
+     * @param {TurnContext} context - Current turn context.
+     * @param {Memory} memory - An interface for accessing state values.
+     * @param {PromptFunctions} functions - Functions to use when rendering the prompt.
+     * @returns {Promise<PromptResponse<TContent>>} A `PromptResponse` with the status and message.
      */
-    public async completePrompt(context: TurnContext, memory: Memory, functions: PromptFunctions): Promise<PromptResponse<TContent>> {
-        const { model, template, tokenizer, validator, max_repair_attempts, history_variable, input_variable } = this.options;
+
+    public async completePrompt(
+        context: TurnContext,
+        memory: Memory,
+        functions: PromptFunctions
+    ): Promise<PromptResponse<TContent>> {
+        // Define event handlers
+        let isStreaming = false;
+        let streamer: StreamingResponse | undefined;
+        const beforeCompletion: PromptCompletionModelBeforeCompletionEvent = async (
+            ctx,
+            memory,
+            functions,
+            tokenizer,
+            template,
+            streaming
+        ) => {
+            // Ignore events for other contexts
+            if (context !== ctx) {
+                return;
+            }
+
+            // Check for a streaming response
+            if (streaming) {
+                isStreaming = true;
+
+                // Create streamer and send initial message
+                streamer = new StreamingResponse(context);
+                if (this._startStreamingMessage) {
+                    await streamer.sendInformativeUpdate(this._startStreamingMessage);
+                }
+            }
+        };
+
+        const chunkReceived: PromptCompletionModelChunkReceivedEvent = async (ctx, memory, chunk) => {
+            // Ignore events for other contexts
+            if (context !== ctx || !streamer) {
+                return;
+            }
+
+            // Send chunk to client
+            const text = chunk.delta?.content ?? '';
+            if (text.length > 0) {
+                await streamer.sendTextChunk(text);
+            }
+        };
+
+        const responseReceived: PromptCompletionModelResponseReceivedEvent = async (ctx, memory, response) => {
+            // Ignore events for other contexts
+            if (context !== ctx || !streamer) {
+                return;
+            }
+
+            // End the stream
+            await streamer.endStream();
+        };
+
+        // Subscribe to model events
+        if (this.options.model.events) {
+            this.options.model.events.on('beforeCompletion', beforeCompletion);
+            this.options.model.events.on('chunkReceived', chunkReceived);
+            this.options.model.events.on('responseReceived', responseReceived);
+        }
+
+        try {
+            // Complete the prompt
+            const response = await this.callCompletePrompt(context, memory, functions);
+            if (response.status == 'success' && isStreaming) {
+                // Delete message from response to avoid sending it twice
+                delete response.message;
+            }
+
+            return response;
+        } finally {
+            // Unsubscribe from model events
+            if (this.options.model.events) {
+                this.options.model.events.off('beforeCompletion', beforeCompletion);
+                this.options.model.events.off('chunkReceived', chunkReceived);
+                this.options.model.events.off('responseReceived', responseReceived);
+            }
+        }
+    }
+
+    /**
+     * @param {TurnContext} context - Current turn context.
+     * @param {Memory} memory - An interface for accessing state values.
+     * @param {PromptFunctions} functions - Functions to use when rendering the prompt.
+     * @returns {Promise<PromptResponse<TContent>>} A `PromptResponse` with the status and message.
+     * @private
+     */
+    public async callCompletePrompt(
+        context: TurnContext,
+        memory: Memory,
+        functions: PromptFunctions
+    ): Promise<PromptResponse<TContent>> {
+        const { model, template, tokenizer, validator, max_repair_attempts, history_variable, input_variable } =
+            this.options;
 
         try {
             // Ask client to complete prompt
-            const response = await model.completePrompt(context, memory, functions, tokenizer, template) as PromptResponse<TContent>;
+            const response = (await model.completePrompt(
+                context,
+                memory,
+                functions,
+                tokenizer,
+                template
+            )) as PromptResponse<TContent>;
             if (response.status !== 'success') {
                 // The response isn't valid so we don't care that the messages type is potentially incorrect.
                 return response;
@@ -292,10 +412,16 @@ export class LLMClient<TContent = any> {
             }
 
             // Validate response
-            const validation = await validator.validateResponse(context, memory, tokenizer, response as PromptResponse<string>, max_repair_attempts);
+            const validation = await validator.validateResponse(
+                context,
+                memory,
+                tokenizer,
+                response as PromptResponse<string>,
+                max_repair_attempts
+            );
             if (validation.valid) {
                 // Update content
-                if (validation.hasOwnProperty('value')) {
+                if (Object.prototype.hasOwnProperty.call(validation, 'value')) {
                     response.message!.content = validation.value;
                 }
 
@@ -320,7 +446,14 @@ export class LLMClient<TContent = any> {
             }
 
             // Attempt to repair response
-            const repair = await this.repairResponse(context, fork, functions, response, validation, max_repair_attempts);
+            const repair = await this.repairResponse(
+                context,
+                fork,
+                functions,
+                response,
+                validation,
+                max_repair_attempts
+            );
 
             // Log repair success
             if (this.options.logRepairs) {
@@ -351,6 +484,9 @@ export class LLMClient<TContent = any> {
     }
 
     /**
+     * @param {Memory} memory - Current memory.
+     * @param {string} variable - Variable to fetch from memory.
+     * @param {Message<any>} input - The current input.
      * @private
      */
     private addInputToHistory(memory: Memory, variable: string, input: Message<any>): void {
@@ -365,6 +501,9 @@ export class LLMClient<TContent = any> {
     }
 
     /**
+     * @param {Memory} memory - Current memory.
+     * @param {string} variable - Variable to fetch value from memory.
+     * @param {Message<TContent>} message - The Message to be added to history.
      * @private
      */
     private addResponseToHistory(memory: Memory, variable: string, message: Message<TContent>): void {
@@ -379,9 +518,23 @@ export class LLMClient<TContent = any> {
     }
 
     /**
+     * @param {TurnContext} context - The current TurnContext
+     * @param {MemoryFork} fork - The current fork of memory to be repaired.
+     * @param {PromptFunctions} functions - Functions to use.
+     * @param {PromptResponse<TContent>} response - The response that needs repairing.
+     * @param {Validation} validation - The Validation object to be used during repair.
+     * @param {number} remaining_attempts - The number of remaining attempts.
+     * @returns {Promise<PromptResponse<TContent>>} - The repaired response.
      * @private
      */
-    private async repairResponse(context: TurnContext, fork: MemoryFork, functions: PromptFunctions, response: PromptResponse<TContent>, validation: Validation, remaining_attempts: number): Promise<PromptResponse<TContent>> {
+    private async repairResponse(
+        context: TurnContext,
+        fork: MemoryFork,
+        functions: PromptFunctions,
+        response: PromptResponse<TContent>,
+        validation: Validation,
+        remaining_attempts: number
+    ): Promise<PromptResponse<TContent>> {
         const { model, template, tokenizer, validator, history_variable } = this.options;
 
         // Add response and feedback to repair history
@@ -391,12 +544,8 @@ export class LLMClient<TContent = any> {
 
         // Append repair history to prompt
         const repairTemplate = Object.assign({}, template, {
-            prompt: new Prompt([
-                template.prompt,
-                new ConversationHistory(`${history_variable}-repair`)
-            ])
+            prompt: new Prompt([template.prompt, new ConversationHistory(`${history_variable}-repair`)])
         });
-
 
         // Log the repair
         if (this.options.logRepairs) {
@@ -404,16 +553,28 @@ export class LLMClient<TContent = any> {
         }
 
         // Ask client to complete prompt
-        const repairResponse = await model.completePrompt(context, fork, functions, tokenizer, repairTemplate) as PromptResponse<TContent>;
+        const repairResponse = (await model.completePrompt(
+            context,
+            fork,
+            functions,
+            tokenizer,
+            repairTemplate
+        )) as PromptResponse<TContent>;
         if (repairResponse.status !== 'success') {
             return repairResponse as PromptResponse<TContent>;
         }
 
         // Validate response
-        validation = await validator.validateResponse(context, fork, tokenizer, repairResponse as PromptResponse<string>, remaining_attempts);
+        validation = await validator.validateResponse(
+            context,
+            fork,
+            tokenizer,
+            repairResponse as PromptResponse<string>,
+            remaining_attempts
+        );
         if (validation.valid) {
             // Update content
-            if (validation.hasOwnProperty('value')) {
+            if (Object.prototype.hasOwnProperty.call(validation, 'value')) {
                 repairResponse.message!.content = validation.value;
             }
 
@@ -426,7 +587,9 @@ export class LLMClient<TContent = any> {
             return {
                 status: 'invalid_response',
                 input: undefined,
-                error: new Error(validation.feedback ?? 'The response was invalid. Try another strategy.')
+                error: new Error(
+                    `Reached max model response repair attempts. Last feedback given to model: "${feedback}"`
+                )
             };
         }
 

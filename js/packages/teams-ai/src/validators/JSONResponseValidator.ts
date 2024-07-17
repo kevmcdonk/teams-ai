@@ -1,26 +1,28 @@
-import { TurnContext } from "botbuilder";
-import { Tokenizer } from "../tokenizers";
-import { PromptResponse } from "../models";
-import { Validation, PromptResponseValidator } from "./PromptResponseValidator";
-import { Validator, Schema, ValidationError } from "jsonschema";
-import { Response } from "./Response";
-import { Memory } from "../MemoryFork";
+import { TurnContext } from 'botbuilder';
+import { Validator, Schema, ValidationError } from 'jsonschema';
+
+import { Memory } from '../MemoryFork';
+import { Validation, PromptResponseValidator } from './PromptResponseValidator';
+import { Tokenizer } from '../tokenizers';
+import { PromptResponse } from '../types';
+
+import { Response } from './Response';
 
 /**
  * Parses any JSON returned by the model and optionally verifies it against a JSON schema.
  * @template TValue Optional. Type of the validation value returned. Defaults to `Record<string, any>`.
  */
 export class JSONResponseValidator<TValue = Record<string, any>> implements PromptResponseValidator<TValue> {
-
     /**
      * Creates a new `JSONResponseValidator` instance.
-     * @param schema Optional. JSON schema to validate the response against.
-     * @param missingJsonFeedback Optional. Custom feedback to give when no JSON is returned.
-     * @param errorFeedback Optional. Custom feedback prefix to use when schema errors are detected.
+     * @param {Schema} schema Optional. JSON schema to validate the response against.
+     * @param {string} missingJsonFeedback Optional. Custom feedback to give when no JSON is returned.
+     * @param {string} errorFeedback Optional. Custom feedback prefix to use when schema errors are detected.
      */
     public constructor(schema?: Schema, missingJsonFeedback?: string, errorFeedback?: string) {
         this.schema = schema;
-        this.missingJsonFeedback = missingJsonFeedback ?? 'No valid JSON objects were found in the response. Return a valid JSON object.';
+        this.missingJsonFeedback =
+            missingJsonFeedback ?? 'No valid JSON objects were found in the response. Return a valid JSON object.';
         this.errorFeedback = errorFeedback ?? 'The JSON returned had errors. Apply these fixes:';
     }
 
@@ -28,11 +30,6 @@ export class JSONResponseValidator<TValue = Record<string, any>> implements Prom
      * Feedback prefix given when schema errors are detected.
      */
     public errorFeedback: string;
-
-    /**
-     * Optional. Substitution for the word "instance" to use in feedback messages.
-     */
-    public instanceName?: string;
 
     /**
      * Feedback given when no JSON is returned.
@@ -46,14 +43,20 @@ export class JSONResponseValidator<TValue = Record<string, any>> implements Prom
 
     /**
      * Validates a response to a prompt.
-     * @param context Context for the current turn of conversation with the user.
-     * @param memory An interface for accessing state values.
-     * @param tokenizer Tokenizer to use for encoding and decoding text.
-     * @param response Response to validate.
-     * @param remaining_attempts Number of remaining attempts to validate the response.
-     * @returns A `Validation` object.
+     * @param {TurnContext} context Context for the current turn of conversation with the user.
+     * @param {Memory} memory An interface for accessing state values.
+     * @param {Tokenizer} tokenizer Tokenizer to use for encoding and decoding text.
+     * @param {PromptResponse<string>} response Response to validate.
+     * @param {number} remaining_attempts Number of remaining attempts to validate the response.
+     * @returns {Promise<Validation<TValue>>} A `Validation` object.
      */
-    public validateResponse(context: TurnContext, memory: Memory, tokenizer: Tokenizer, response: PromptResponse<string>, remaining_attempts: number): Promise<Validation<TValue>> {
+    public validateResponse(
+        context: TurnContext,
+        memory: Memory,
+        tokenizer: Tokenizer,
+        response: PromptResponse<string>,
+        remaining_attempts: number
+    ): Promise<Validation<TValue>> {
         const message = response.message!;
         const text = message.content ?? '';
 
@@ -81,14 +84,14 @@ export class JSONResponseValidator<TValue = Record<string, any>> implements Prom
                         value: obj as TValue
                     });
                 } else if (!errors) {
-                    errors = result.errors
+                    errors = result.errors;
                 }
             }
 
             return Promise.resolve({
                 type: 'Validation',
                 valid: false,
-                feedback: `${this.errorFeedback}\n${errors!.map(e => this.getErrorFix(e)).join('\n')}`
+                feedback: `${this.errorFeedback}\n${errors!.map((e) => this.getErrorFix(e)).join('\n')}`
             });
         } else {
             // Return the last object
@@ -102,6 +105,8 @@ export class JSONResponseValidator<TValue = Record<string, any>> implements Prom
 
     /**
      * @private
+     * @param {ValidationError} error Error in the JSON object
+     * @returns {string} How to fix the given error.
      */
     private getErrorFix(error: ValidationError): string {
         // Get argument as a string
@@ -123,10 +128,15 @@ export class JSONResponseValidator<TValue = Record<string, any>> implements Prom
                 return `convert "${error.property}" to one of the allowed types in the provided schema.`;
             case 'additionalProperties':
                 // field has an extra property
-                return `remove the "${arg}" property from ${error.property == 'instance' ? 'the JSON object' : `"${error.property}"`}`;
+                return `remove the "${arg}" property from ${
+                    error.property == 'instance' ? 'the JSON object' : `"${error.property}"`
+                }`;
             case 'required':
                 // field is missing a required property
-                return `add the "${arg}" property to ${error.property == 'instance' ? 'the JSON object' : `"${error.property}"`}`;
+                return `add the "${arg}" property to ${
+                    error.property == 'instance' ? 'the JSON object' : `"${error.property}"`
+                }`;
+            // TODO: jsonschema does not validate formats by default. https://github.com/microsoft/teams-ai/issues/1080
             case 'format':
                 // field is not in the correct format
                 return `change the "${error.property}" property to be a ${arg}`;

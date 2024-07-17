@@ -5,8 +5,6 @@
  * Copyright (c) Microsoft Corporation. All rights reserved.
  * Licensed under the MIT License.
  */
-// TODO:
-/* eslint-disable security/detect-object-injection */
 import {
     TurnContext,
     ActivityTypes,
@@ -226,9 +224,13 @@ export class AdaptiveCards<TState extends TurnState> {
 
     /**
      * Adds a route to the application for handling the `Data.Query` request for an `Input.ChoiceSet`.
-     * @param dataset The named dataset(s) to be handled.
-     * @param handler The code to execute when the query is triggered.
-     * @returns The application for chaining purposes.
+     * @param {string | RegExp | RouteSelector | (string | RegExp | RouteSelector)[]} dataset The named dataset(s) to be handled.
+     * @callback handler
+     * @param {Function} handler The code to execute when the query is triggered.
+     * @param {TurnContext} handler.context The current turn context for the handler callback.
+     * @param {TState} handler.state The current turn state for the handler callback.
+     * @param {Query<AdaptiveCardsSearchParams>} handler.query The query parameters for the handler callback.
+     * @returns {this} The application for chaining purposes.
      */
     public search(
         dataset: string | RegExp | RouteSelector | (string | RegExp | RouteSelector)[],

@@ -19,12 +19,17 @@ export interface Message<TContent = string> {
     /**
      * Text of the message.
      */
-    content: TContent|undefined;
+    content: TContent | undefined;
 
     /**
      * Optional. A named function to call.
      */
     function_call?: FunctionCall;
+
+    /**
+     * The context used for the message.
+     */
+    context?: MessageContext;
 
     /**
      * Optional. Name of the function that was called.
@@ -63,13 +68,49 @@ export interface TextContentPart {
 
 export interface ImageContentPart {
     /**
-     * Type of the message content. Should always be 'image'.
+     * Type of the message content. Should always be 'image_url'.
      */
-    type: 'image';
+    type: 'image_url';
 
     /**
      * The URL of the image.
      */
-    image_url: string|{url: string};
+    image_url: string | { url: string };
 }
 
+/**
+ * Citations returned by the model.
+ */
+export interface Citation {
+    /**
+     * The content of the citation.
+     */
+    content: string;
+
+    /**
+     * The title of the citation.
+     */
+    title: string | null;
+
+    /**
+     * The URL of the citation.
+     */
+    url: string | null;
+
+    /**
+     * The filepath of the document.
+     */
+    filepath: string | null;
+}
+
+export interface MessageContext {
+    /**
+     * Citations used in the message.
+     */
+    citations: Citation[];
+
+    /**
+     * The intent of the message (what the user wrote).
+     */
+    intent: string;
+}

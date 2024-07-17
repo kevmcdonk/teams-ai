@@ -11,6 +11,7 @@ using Microsoft.Teams.AI.AI.Tokenizers;
 using Microsoft.Teams.AI.Exceptions;
 using Microsoft.Teams.AI.State;
 using Microsoft.Teams.AI.Utilities;
+using System.ClientModel.Primitives;
 using System.Net;
 using System.Text.Json;
 using static Azure.AI.OpenAI.OpenAIClientOptions;
@@ -27,7 +28,12 @@ namespace Microsoft.Teams.AI.AI.Models
         private readonly ILogger _logger;
 
         private readonly OpenAIClient _openAIClient;
-        private string _deploymentName;
+        private readonly string _deploymentName;
+        private readonly static JsonSerializerOptions _serializerOptions = new()
+        {
+            WriteIndented = true,
+            Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+        };
 
         private static readonly string _userAgent = "AlphaWave";
 
@@ -84,11 +90,7 @@ namespace Microsoft.Teams.AI.AI.Models
             Verify.ParamNotNull(options.AzureApiKey, "AzureOpenAIModelOptions.AzureApiKey");
             Verify.ParamNotNull(options.AzureDefaultDeployment, "AzureOpenAIModelOptions.AzureDefaultDeployment");
             Verify.ParamNotNull(options.AzureEndpoint, "AzureOpenAIModelOptions.AzureEndpoint");
-            if (!options.AzureEndpoint.StartsWith("https://"))
-            {
-                throw new ArgumentException($"Model created with an invalid endpoint of `{options.AzureEndpoint}`. The endpoint must be a valid HTTPS url.");
-            }
-            string apiVersion = options.AzureApiVersion ?? "2023-05-15";
+            string apiVersion = options.AzureApiVersion ?? "2024-02-15-preview";
             ServiceVersion? serviceVersion = ConvertStringToServiceVersion(apiVersion);
             if (serviceVersion == null)
             {
@@ -125,6 +127,8 @@ namespace Microsoft.Teams.AI.AI.Models
         {
             DateTime startTime = DateTime.UtcNow;
             int maxInputTokens = promptTemplate.Configuration.Completion.MaxInputTokens;
+
+
             if (_options.CompletionType == CompletionType.Text)
             {
                 // Render prompt
@@ -190,12 +194,12 @@ namespace Microsoft.Teams.AI.AI.Models
                     _logger.LogTrace($"duration {(DateTime.UtcNow - startTime).TotalMilliseconds} ms");
                     if (promptResponse.Status == PromptResponseStatus.Success)
                     {
-                        _logger.LogTrace(JsonSerializer.Serialize(completionsResponse!.Value));
+                        _logger.LogTrace(JsonSerializer.Serialize(completionsResponse!.Value, _serializerOptions));
                     }
                     if (promptResponse.Status == PromptResponseStatus.RateLimited)
                     {
                         _logger.LogTrace("HEADERS:");
-                        _logger.LogTrace(JsonSerializer.Serialize(rawResponse.Headers));
+                        _logger.LogTrace(JsonSerializer.Serialize(rawResponse.Headers, _serializerOptions));
                     }
                 }
 
@@ -221,11 +225,20 @@ namespace Microsoft.Teams.AI.AI.Models
                 {
                     // TODO: Colorize
                     _logger.LogTrace("CHAT PROMPT:");
-                    _logger.LogTrace(JsonSerializer.Serialize(prompt.Output));
+                    _logger.LogTrace(JsonSerializer.Serialize(prompt.Output, _serializerOptions));
+                }
+
+                // Get input message
+                // - we're doing this here because the input message can be complex and include images.
+                ChatMessage? input = null;
+                int last = prompt.Output.Count - 1;
+                if (last >= 0 && prompt.Output[last].Role == "user")
+                {
+                    input = prompt.Output[last];
                 }
 
                 // Call chat completion API
-                IEnumerable<Azure.AI.OpenAI.ChatMessage> chatMessages = prompt.Output.Select(chatMessage => chatMessage.ToAzureSdkChatMessage());
+                IEnumerable<ChatRequestMessage> chatMessages = prompt.Output.Select(chatMessage => chatMessage.ToChatRequestMessage());
                 ChatCompletionsOptions chatCompletionsOptions = new(_deploymentName, chatMessages)
                 {
                     MaxTokens = maxInputTokens,
@@ -234,6 +247,9 @@ namespace Microsoft.Teams.AI.AI.Models
                     PresencePenalty = (float)promptTemplate.Configuration.Completion.PresencePenalty,
                     FrequencyPenalty = (float)promptTemplate.Configuration.Completion.FrequencyPenalty,
                 };
+
+                IDictionary<string, JsonElement>? additionalData = promptTemplate.Configuration.Completion.AdditionalData;
+                AddAzureChatExtensionConfigurations(chatCompletionsOptions, additionalData);
 
                 Response? rawResponse;
                 Response<ChatCompletions>? chatCompletionsResponse = null;
@@ -244,6 +260,7 @@ namespace Microsoft.Teams.AI.AI.Models
                     rawResponse = chatCompletionsResponse.GetRawResponse();
                     promptResponse.Status = PromptResponseStatus.Success;
                     promptResponse.Message = chatCompletionsResponse.Value.Choices[0].Message.ToChatMessage();
+                    promptResponse.Input = input;
                 }
                 catch (RequestFailedException e)
                 {
@@ -269,12 +286,12 @@ namespace Microsoft.Teams.AI.AI.Models
                     _logger.LogTrace($"duration {(DateTime.UtcNow - startTime).TotalMilliseconds} ms");
                     if (promptResponse.Status == PromptResponseStatus.Success)
                     {
-                        _logger.LogTrace(JsonSerializer.Serialize(chatCompletionsResponse!.Value));
+                        _logger.LogTrace(JsonSerializer.Serialize(chatCompletionsResponse!.Value, _serializerOptions));
                     }
                     if (promptResponse.Status == PromptResponseStatus.RateLimited)
                     {
                         _logger.LogTrace("HEADERS:");
-                        _logger.LogTrace(JsonSerializer.Serialize(rawResponse.Headers));
+                        _logger.LogTrace(JsonSerializer.Serialize(rawResponse.Headers, _serializerOptions));
                     }
                 }
 
@@ -290,10 +307,41 @@ namespace Microsoft.Teams.AI.AI.Models
                 case "2023-05-15": return ServiceVersion.V2023_05_15;
                 case "2023-06-01-preview": return ServiceVersion.V2023_06_01_Preview;
                 case "2023-07-01-preview": return ServiceVersion.V2023_07_01_Preview;
-                case "2023-08-01-preview": return ServiceVersion.V2023_08_01_Preview;
-                case "2023-09-01-preview": return ServiceVersion.V2023_09_01_Preview;
+                case "2024-02-15-preview": return ServiceVersion.V2024_02_15_Preview;
+                case "2024-03-01-preview": return ServiceVersion.V2024_03_01_Preview;
                 default:
                     return null;
+            }
+        }
+
+        private void AddAzureChatExtensionConfigurations(ChatCompletionsOptions options, IDictionary<string, JsonElement>? additionalData)
+        {
+            if (additionalData == null)
+            {
+                return;
+            }
+
+            if (additionalData != null && additionalData.TryGetValue("data_sources", out JsonElement array))
+            {
+                List<AzureChatExtensionConfiguration> configurations = new();
+                List<object> entries = array.Deserialize<List<object>>()!;
+                foreach (object item in entries)
+                {
+                    AzureChatExtensionConfiguration? dataSourceItem = ModelReaderWriter.Read<AzureChatExtensionConfiguration>(BinaryData.FromObjectAsJson(item));
+                    if (dataSourceItem != null)
+                    {
+                        configurations.Add(dataSourceItem);
+                    }
+                }
+
+                if (configurations.Count > 0)
+                {
+                    options.AzureExtensionsOptions = new();
+                    foreach (AzureChatExtensionConfiguration configuration in configurations)
+                    {
+                        options.AzureExtensionsOptions.Extensions.Add(configuration);
+                    }
+                }
             }
         }
     }
